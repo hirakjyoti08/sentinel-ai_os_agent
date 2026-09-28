@@ -525,6 +525,69 @@ class TestTUIComponents:
         assert event.offending_name == "stress_test"
         assert event.suggested_action == "kill"
 
+    def test_analyze_disk_hogs_tool(self, tmp_path):
+        from src.tools.read_only import analyze_disk_hogs
+        fake_cache = tmp_path / "mock_cache"
+        fake_cache.mkdir()
+        fake_file = fake_cache / "large_blob.bin"
+        fake_file.write_bytes(b"0" * 1024 * 1024)
+        
+        custom_targets = [{"name": "Mock Cache", "path": str(fake_cache), "category": "custom"}]
+        res = analyze_disk_hogs(custom_paths=custom_targets)
+        assert res["success"] is True
+        assert "targets" in res
+        assert "total_reclaimable_bytes" in res
+        assert res["total_reclaimable_bytes"] >= 1024 * 1024
+        assert any(t["name"] == "Mock Cache" for t in res["targets"])
+
+    def test_clean_developer_caches_tool(self, tmp_path):
+        from src.tools.reversible import clean_developer_caches
+        fake_cache = tmp_path / "clean_me"
+        fake_cache.mkdir()
+        (fake_cache / "test1.tmp").write_text("hello world")
+        (fake_cache / "subdir").mkdir()
+        (fake_cache / "subdir" / "test2.tmp").write_text("another temp")
+
+        custom_targets = [{"name": "Test Cache", "path": str(fake_cache), "category": "test"}]
+        res = clean_developer_caches(targets=["test cache"], custom_paths=custom_targets)
+        assert res["success"] is True
+        assert res["cleaned_targets"] == ["Test Cache"]
+        assert res["total_reclaimed_bytes"] > 0
+        assert len(list(fake_cache.iterdir())) == 0
+
+    def test_agent_disk_hogs_routing(self):
+        from src.agent.core import Agent
+        agent = Agent()
+        res = agent._try_local_fallback("analyze disk hogs and free space")
+        assert res is not None
+        assert "Developer Cache & Storage Consumption" in res
+        assert "Total Reclaimable" in res
+
+    def test_agent_chat_token_streaming(self):
+        from src.agent.core import Agent
+        agent = Agent()
+        tokens = []
+        def _collector(tok):
+            tokens.append(tok)
+
+        res = agent.chat("hello", on_token=_collector)
+        assert len(tokens) > 0
+        assert "".join(tokens).strip() == res.strip()
+
+    def test_tui_chat_panel_streaming_lifecycle(self):
+        from src.ui.tui import ChatPanel
+        panel = ChatPanel()
+        panel._is_streaming = False
+        panel._stream_buffer = ""
+        panel.stream_token("Hello ")
+        assert panel._is_streaming is True
+        assert panel._stream_buffer == "Hello "
+        panel.stream_token("world!")
+        assert panel._stream_buffer == "Hello world!"
+        panel.finish_streaming()
+        assert panel._is_streaming is False
+        assert panel._stream_buffer == ""
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

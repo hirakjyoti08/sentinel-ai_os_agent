@@ -3,7 +3,9 @@
 import json
 import logging
 import os
-from typing import List, Dict, Any, Optional
+import time
+import types
+from typing import List, Dict, Any, Optional, Callable
 
 import google.generativeai as genai
 from groq import Groq
@@ -96,7 +98,7 @@ class Agent:
                 "hint": "Set GEMINI_API_KEY in .env",
             }
     
-    def _call_llm(self, messages: List[Dict], tools: List[Dict] = None) -> Any:
+    def _call_llm(self, messages: List[Dict], tools: List[Dict] = None, on_token: Optional[Callable[[str], None]] = None) -> Any:
         """Call LLM with fallback: LM Studio -> Groq -> Gemini."""
         if tools is None:
             openai_tools = self.tool_schemas_openai
@@ -145,14 +147,88 @@ class Agent:
                 if openai_tools:
                     kwargs["tools"] = openai_tools
                     kwargs["tool_choice"] = tool_choice
-                response = self.groq_client.chat.completions.create(
-                    model=groq_model_name,
-                    messages=groq_messages,
-                    timeout=8.0,
-                    **kwargs
-                )
-                logger.debug("Groq call successful")
-                return response
+
+                if on_token:
+                    # Stream tokens in real time
+                    stream = self.groq_client.chat.completions.create(
+                        model=groq_model_name,
+                        messages=groq_messages,
+                        timeout=12.0,
+                        stream=True,
+                        **kwargs
+                    )
+                    accumulated_content = []
+                    accumulated_reasoning = []
+                    tool_calls_dict = {}
+
+                    for chunk in stream:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                            accumulated_reasoning.append(delta.reasoning_content)
+                        if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                            for tc in delta.tool_calls:
+                                idx = getattr(tc, 'index', 0)
+                                if idx not in tool_calls_dict:
+                                    tool_calls_dict[idx] = {
+                                        "id": getattr(tc, 'id', f"call_{idx}") or f"call_{idx}",
+                                        "name": "",
+                                        "arguments": ""
+                                    }
+                                if getattr(tc, 'id', None):
+                                    tool_calls_dict[idx]["id"] = tc.id
+                                fn = getattr(tc, 'function', None)
+                                if fn:
+                                    if getattr(fn, 'name', None):
+                                        tool_calls_dict[idx]["name"] += fn.name
+                                    if getattr(fn, 'arguments', None):
+                                        tool_calls_dict[idx]["arguments"] += fn.arguments
+                        if hasattr(delta, 'content') and delta.content:
+                            accumulated_content.append(delta.content)
+                            if not tool_calls_dict:
+                                on_token(delta.content)
+
+                    if tool_calls_dict:
+                        mock_tcs = []
+                        for idx in sorted(tool_calls_dict.keys()):
+                            t_info = tool_calls_dict[idx]
+                            mock_tcs.append(
+                                types.SimpleNamespace(
+                                    id=t_info["id"],
+                                    type="function",
+                                    function=types.SimpleNamespace(
+                                        name=t_info["name"],
+                                        arguments=t_info["arguments"]
+                                    )
+                                )
+                            )
+                        mock_msg = types.SimpleNamespace(
+                            content="".join(accumulated_content) if accumulated_content else None,
+                            tool_calls=mock_tcs,
+                            reasoning_content="".join(accumulated_reasoning) if accumulated_reasoning else None
+                        )
+                    else:
+                        mock_msg = types.SimpleNamespace(
+                            content="".join(accumulated_content),
+                            tool_calls=None,
+                            reasoning_content="".join(accumulated_reasoning) if accumulated_reasoning else None
+                        )
+                    res = types.SimpleNamespace(
+                        choices=[types.SimpleNamespace(message=mock_msg)],
+                        _streamed=True
+                    )
+                    logger.debug("Groq streaming call successful")
+                    return res
+                else:
+                    response = self.groq_client.chat.completions.create(
+                        model=groq_model_name,
+                        messages=groq_messages,
+                        timeout=8.0,
+                        **kwargs
+                    )
+                    logger.debug("Groq call successful")
+                    return response
             except Exception as e:
                 provider_errors.append(f"Groq runtime error: {e}")
                 logger.warning(f"Groq error: {e}, falling back to Gemini")
@@ -166,13 +242,31 @@ class Agent:
                 if gemini_tools:
                     kwargs["tools"] = gemini_tools
                     kwargs["tool_config"] = gemini_config
-                response = self.gemini_model.generate_content(
-                    self._convert_to_gemini_prompt(messages),
-                    request_options={"timeout": 8.0},
-                    **kwargs
-                )
-                logger.debug("Gemini call successful")
-                return response
+
+                if on_token and not gemini_tools:
+                    stream_resp = self.gemini_model.generate_content(
+                        self._convert_to_gemini_prompt(messages),
+                        stream=True,
+                        request_options={"timeout": 12.0},
+                        **kwargs
+                    )
+                    full_parts = []
+                    for chunk in stream_resp:
+                        if hasattr(chunk, 'text') and chunk.text:
+                            full_parts.append(chunk.text)
+                            on_token(chunk.text)
+                    final_text = "".join(full_parts)
+                    mock_msg = types.SimpleNamespace(content=final_text, tool_calls=None, reasoning_content=None)
+                    res_obj = types.SimpleNamespace(choices=[types.SimpleNamespace(message=mock_msg)], _streamed=True)
+                    return res_obj
+                else:
+                    response = self.gemini_model.generate_content(
+                        self._convert_to_gemini_prompt(messages),
+                        request_options={"timeout": 8.0},
+                        **kwargs
+                    )
+                    logger.debug("Gemini call successful")
+                    return response
             except Exception as e:
                 provider_errors.append(f"Gemini runtime error: {e}")
                 logger.warning(f"Gemini error: {e}")
@@ -271,8 +365,8 @@ class Agent:
                 
         return result
 
-    def chat(self, user_input: str) -> str:
-        """Single-shot chat with tool use."""
+    def chat(self, user_input: str, on_token: Optional[Callable[[str], None]] = None) -> str:
+        """Single-shot chat with tool use and optional token streaming."""
         logger.info(f"Chat request: {user_input[:100]}")
         self.memory.add_interaction(user_input, "")
         
@@ -281,6 +375,12 @@ class Agent:
         if user_lower in ['hi', 'hii', 'hello', 'hey', 'who are you', 'help']:
             greeting = self._handle_greeting(user_lower)
             if greeting:
+                if on_token:
+                    words = greeting.split(" ")
+                    for i, w in enumerate(words):
+                        suffix = " " if i < len(words) - 1 else ""
+                        on_token(w + suffix)
+                        time.sleep(0.003)
                 self.memory.add_interaction(user_input, greeting, [])
                 return greeting
         
@@ -329,15 +429,28 @@ class Agent:
         
         for i in range(max_tool_calls):
             try:
-                response = self._call_llm(messages)
+                response = self._call_llm(messages, on_token=on_token)
             except RuntimeError as e:
                 logger.warning(f"LLM unavailable, using local fallback: {e}")
                 # Fallback to local heuristic tools when AI is unavailable or rate-limited
                 local_result = self._try_local_fallback(user_input)
                 if local_result:
+                    if on_token:
+                        words = local_result.split(" ")
+                        for i_w, w in enumerate(words):
+                            suffix = " " if i_w < len(words) - 1 else ""
+                            on_token(w + suffix)
+                            time.sleep(0.003)
                     self.memory.add_interaction(user_input, local_result, [])
                     return local_result
-                return self._build_llm_unavailable_message(str(e))
+                unavail = self._build_llm_unavailable_message(str(e))
+                if on_token:
+                    words = unavail.split(" ")
+                    for i_w, w in enumerate(words):
+                        suffix = " " if i_w < len(words) - 1 else ""
+                        on_token(w + suffix)
+                        time.sleep(0.003)
+                return unavail
             
             # Check for tool calls (Groq/OpenAI format)
             if hasattr(response, 'choices') and response.choices:
@@ -410,6 +523,12 @@ class Agent:
                     final_text = choice.message.reasoning_content
                 if not final_text:
                     final_text = str(response)
+                if on_token and not getattr(response, '_streamed', False):
+                    words = final_text.split(" ")
+                    for i_w, w in enumerate(words):
+                        suffix = " " if i_w < len(words) - 1 else ""
+                        on_token(w + suffix)
+                        time.sleep(0.003)
                 self.memory.add_interaction(user_input, final_text, tool_calls)
                 logger.info(f"Chat response: {final_text[:200]}")
                 return final_text
@@ -459,6 +578,12 @@ class Agent:
                             break
                     else:
                         final_text = response.text if hasattr(response, 'text') else str(response)
+                        if on_token and not getattr(response, '_streamed', False):
+                            words = final_text.split(" ")
+                            for i_w, w in enumerate(words):
+                                suffix = " " if i_w < len(words) - 1 else ""
+                                on_token(w + suffix)
+                                time.sleep(0.003)
                         self.memory.add_interaction(user_input, final_text, tool_calls)
                         logger.info(f"Chat response (Gemini): {final_text[:200]}")
                         return final_text
@@ -682,7 +807,42 @@ class Agent:
                 return "\n".join(lines)
             return f"Error getting memory info: {result.get('error')}"
         
-        # Disk queries
+        # Clean caches or free up disk space queries (check BEFORE generic disk queries)
+        if any(kw in user_lower for kw in ['free up disk', 'clean disk', 'clean cache', 'clean developer', 'disk hog', 'disk hogs', 'reclaim disk', 'reclaim space', 'clean bloat', 'find large folders']):
+            result = execute_tool('analyze_disk_hogs', {})
+            if result.get('success'):
+                targets = result.get('targets', [])
+                total_str = result.get('total_reclaimable_str', '0 B')
+                if not targets:
+                    return "### Developer Cache & Storage Consumption\nNo significant reclaimable developer caches found. Your system storage is clean!\nTotal Reclaimable: **0 B**"
+                lines = [
+                    "### Developer Cache & Storage Consumption",
+                    f"Identified {len(targets)} reclaimable developer & system caches ({total_str} total potential savings):",
+                    "",
+                    "| Category | Size | Path | Description |",
+                    "|---|:---:|---|---|",
+                ]
+                for t in targets[:6]:
+                    lines.append(f"| {t['name']} | {t['size_str']} | {t['path']} | {t['description']} |")
+                lines.append("")
+                lines.append(f"Total Reclaimable: **{total_str}**. To clean all caches, enter 'clean developer caches all'.")
+                return "\n".join(lines)
+            return f"Error scanning disk hogs: {result.get('error')}"
+
+        if user_lower.startswith('clean developer caches') or user_lower.startswith('purge caches'):
+            target = "all"
+            for t in ["pip", "npm", "xcode", "homebrew", "yarn", "trash"]:
+                if t in user_lower:
+                    target = t
+                    break
+            result = execute_tool('clean_developer_caches', {'targets': [target]})
+            if result.get('success'):
+                reclaimed = result.get('reclaimed_str', '0 B')
+                count = result.get('count', 0)
+                return f"✨ Successfully cleaned {count} cache directories and reclaimed **{reclaimed}**."
+            return f"Error cleaning caches: {result.get('error')}"
+
+        # Generic Disk queries
         if any(kw in user_lower for kw in ['disk', 'storage', 'space']):
             result = execute_tool('get_disk_usage', {'path': '/'})
             if result.get('success'):

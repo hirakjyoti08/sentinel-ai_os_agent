@@ -91,6 +91,19 @@ TOOL_DEFINITIONS = [
         "tier": "read_only",
         "function": read_only.get_network_bandwidth
     },
+    {
+        "name": "analyze_disk_hogs",
+        "description": "Scan and analyze developer caches, build artifacts, and bloated directories (Xcode, pip, npm, Homebrew, trash)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "custom_paths": {"type": "array", "items": {"type": "string"}, "description": "Optional list of specific directories to inspect"}
+            },
+            "required": []
+        },
+        "tier": "read_only",
+        "function": read_only.analyze_disk_hogs
+    },
     # Reversible tools
     {
         "name": "pause_process",
@@ -138,6 +151,19 @@ TOOL_DEFINITIONS = [
         },
         "tier": "reversible",
         "function": reversible.clear_cache_dir
+    },
+    {
+        "name": "clean_developer_caches",
+        "description": "Safely clean developer caches and bloated directories (e.g. 'pip', 'npm', 'xcode', 'homebrew', 'trash', or 'all')",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "targets": {"type": "array", "items": {"type": "string"}, "description": "Caches to clean (e.g. ['pip', 'npm', 'xcode', 'homebrew', 'trash', 'all'])"}
+            },
+            "required": []
+        },
+        "tier": "reversible",
+        "function": reversible.clean_developer_caches
     },
     # Destructive tools
     {

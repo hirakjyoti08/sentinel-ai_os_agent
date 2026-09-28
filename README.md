@@ -29,13 +29,15 @@ The screenshot above demonstrates **SENTINEL** diagnosing, inspecting, and manag
 ## Features
 
 - **Natural Language Interface**: Ask questions like "why is my CPU high?", "free up disk space", or "can I run Docker/Photoshop?"
+- **Real-Time Token Streaming**: Smooth token-by-token rendering with active cursor (`▌`) and non-blocking Textual UI updates
+- **Developer Disk Cleaner**: Auto-detects and safely purges Xcode DerivedData, Homebrew, pip, npm/yarn caches, and trash
 - **Whitelisted Tool Layer**: Safe execution across 3 security tiers (read-only, reversible, destructive)
 - **Safety First**: Interactive confirmations, circuit breaker protection, and a full SQLite audit trail with undo capability
 - **Multi-Step Reasoning**: Plan → Act → Observe → Reflect loop for complex troubleshooting tasks
 - **Live Reactive TUI Dashboard**: Three-panel Textual interface (interactive chat + live stats + audit log)
 - **Background Telemetry Watcher**: Autonomous anomaly detection and rolling network speed differentials
 - **Multi-LLM Hierarchy**: Local LM Studio (primary) with Groq (Qwen) and Gemini cloud fallbacks
-- **Automated Test Suite**: 38 comprehensive unit and integration tests passing with 100% coverage across tools and UI components
+- **Automated Test Suite**: 47 comprehensive unit and integration tests passing with 100% coverage across tools and UI components
 
 ## Architecture
 
@@ -172,8 +174,8 @@ ai-os-agent/
 
 | Tier | Tools | Confirmation | Use Case |
 |------|-------|--------------|----------|
-| **read_only** | `list_processes`, `get_disk_usage`, `get_cpu_usage`, `get_gpu_usage`, `get_memory_usage`, `get_system_info`, `get_top_memory_processes`, `list_open_ports`, `get_network_bandwidth` | None (auto-approve) | Information & telemetry gathering |
-| **reversible** | `pause_process`, `resume_process`, `set_priority`, `clear_cache_dir` | `y/N` | Temporary & revertible changes |
+| **read_only** | `list_processes`, `get_disk_usage`, `get_cpu_usage`, `get_gpu_usage`, `get_memory_usage`, `get_system_info`, `get_top_memory_processes`, `list_open_ports`, `get_network_bandwidth`, `get_battery_and_thermal`, `analyze_disk_hogs` | None (auto-approve) | Information & telemetry gathering |
+| **reversible** | `pause_process`, `resume_process`, `set_priority`, `clear_cache_dir`, `clean_developer_caches` | `y/N` | Temporary & revertible changes |
 | **destructive** | `kill_process`, `close_port`, `delete_file`, `stop_service` | Safety confirmation (`yes`) | Process & port termination, deletions |
 
 **Circuit Breaker**: After 5 destructive actions in 5 minutes, forces re-confirmation for each subsequent destructive action.

@@ -511,6 +511,11 @@ class AuditLogPanel(Static):
 class ChatPanel(Container):
     """Left panel: Conversational chat interface with integrated action chips."""
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._is_streaming = False
+        self._stream_buffer = ""
+
     def compose(self) -> ComposeResult:
         yield Static(
             "[bold #58a6ff]🛡️ SENTINEL[/bold #58a6ff]  [dim #8b949e]• AI‑Powered OS Management Agent[/dim #8b949e]",
@@ -521,6 +526,7 @@ class ChatPanel(Container):
             id="ai_engine_bar"
         )
         yield RichLog(id="chat_log", wrap=True, min_width=1, highlight=True, markup=True)
+        yield Static("", id="streaming_bubble")
         yield Static(
             "[dim #3fb950]● Ready[/dim #3fb950] [dim #8b949e]| Telemetry monitor active[/dim #8b949e]",
             id="agent_status"
@@ -539,6 +545,36 @@ class ChatPanel(Container):
         with Horizontal(id="input_container"):
             yield Input(placeholder="Ask anything or enter a command... (e.g. 'how is my pc', 'free disk space')", id="chat_input")
             yield Button("Send ↵", id="btn_send", variant="primary")
+    
+    def stream_token(self, token: str):
+        """Stream an individual token into the active streaming bubble."""
+        if not self._is_streaming:
+            self._is_streaming = True
+            self._stream_buffer = ""
+        self._stream_buffer += token
+        try:
+            bubble = self.query_one("#streaming_bubble", Static)
+            bubble.add_class("active")
+            safe_text = format_chat_markup(self._stream_buffer)
+            bubble.update(f"[bold #3fb950]✦ OS Assistant[/bold #3fb950] [dim #8b949e](generating...)[/dim #8b949e]\n  {safe_text}[bold #3fb950]▌[/bold #3fb950]")
+            bubble.scroll_end(animate=False)
+        except Exception:
+            pass
+
+    def reset_streaming(self):
+        """Clear and hide the streaming bubble."""
+        self._is_streaming = False
+        self._stream_buffer = ""
+        try:
+            bubble = self.query_one("#streaming_bubble", Static)
+            bubble.update("")
+            bubble.remove_class("active")
+        except Exception:
+            pass
+
+    def finish_streaming(self):
+        """Finalize streaming session."""
+        self.reset_streaming()
     
     def update_ai_engines(self, content: str):
         """Update the aesthetic AI engine status bar."""
@@ -688,6 +724,20 @@ class AIOSAgentApp(App):
         background: #0d1117;
         overflow-x: hidden;
         scrollbar-size-horizontal: 0;
+    }
+    
+    #streaming_bubble {
+        height: auto;
+        max-height: 8;
+        padding: 0 1;
+        background: #0d1117;
+        color: #f0f6fc;
+        overflow-y: auto;
+        display: none;
+    }
+    
+    #streaming_bubble.active {
+        display: block;
     }
     
     #agent_status {
@@ -966,11 +1016,17 @@ class AIOSAgentApp(App):
     async def process_command(self, user_input: str):
         """Process user command through agent with conversational commentary."""
         self._agent_busy = True
+        self._chat_panel.reset_streaming()
+
+        def _on_token(token: str):
+            self.call_from_thread(self._chat_panel.stream_token, token)
+
         try:
             response = await asyncio.wait_for(
-                asyncio.to_thread(self.agent.chat, user_input),
-                timeout=12.0
+                asyncio.to_thread(self.agent.chat, user_input, _on_token),
+                timeout=20.0
             )
+            self._chat_panel.finish_streaming()
             
             # Check for confirmation request
             if response.startswith("__CONFIRM_KILL__") and response.endswith("__"):
@@ -979,15 +1035,18 @@ class AIOSAgentApp(App):
             else:
                 self._chat_panel.add_message("agent", response)
         except asyncio.TimeoutError:
+            self._chat_panel.finish_streaming()
             self._chat_panel.add_message(
                 "system",
-                "⏱ Operation timed out after 12 seconds. System state inspection was cancelled."
+                "⏱ Operation timed out after 20 seconds. System state inspection was cancelled."
             )
         except asyncio.CancelledError:
-            pass
+            self._chat_panel.finish_streaming()
         except Exception as e:
+            self._chat_panel.finish_streaming()
             self._chat_panel.add_message("system", f"Encountered an issue: {e}")
         finally:
+            self._chat_panel.finish_streaming()
             self._agent_busy = False
             self.refresh_audit_log()
     

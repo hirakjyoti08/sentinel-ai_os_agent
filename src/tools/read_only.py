@@ -363,3 +363,79 @@ def get_network_bandwidth(interval: float = 0.2) -> Dict[str, Any]:
             "success": False,
             "error": str(e)
         }
+
+
+def analyze_disk_hogs(custom_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Scan and analyze developer caches, build artifacts, and bloated directories."""
+    default_candidates = [
+        ("Xcode DerivedData", os.path.expanduser("~/Library/Developer/Xcode/DerivedData"), "Intermediate Xcode build objects"),
+        ("Xcode DeviceSupport", os.path.expanduser("~/Library/Developer/Xcode/iOS DeviceSupport"), "Cached iOS symbol files"),
+        ("Homebrew Cache", os.path.expanduser("~/Library/Caches/Homebrew"), "Downloaded Homebrew package bottles"),
+        ("Pip Package Cache", os.path.expanduser("~/Library/Caches/pip"), "Cached Python package wheels & tarballs"),
+        ("Linux Pip Cache", os.path.expanduser("~/.cache/pip"), "Cached Python packages"),
+        ("NPM Cache", os.path.expanduser("~/.npm"), "Cached Node package manager archives"),
+        ("Yarn Cache", os.path.expanduser("~/Library/Caches/Yarn"), "Cached Yarn dependencies"),
+        ("User Trash", os.path.expanduser("~/.Trash"), "Deleted files pending trash removal"),
+        ("Linux Trash", os.path.expanduser("~/.local/share/Trash"), "Deleted files pending trash removal"),
+    ]
+
+    scan_list = []
+    if custom_paths:
+        for p in custom_paths:
+            if isinstance(p, dict):
+                p_path = p.get("path", "")
+                p_name = p.get("name", os.path.basename(p_path) or "Custom Path")
+                p_desc = p.get("category", p.get("description", "User specified target"))
+                exp = os.path.expanduser(p_path)
+                scan_list.append((p_name, exp, p_desc))
+            else:
+                exp = os.path.expanduser(str(p))
+                scan_list.append((os.path.basename(exp) or "Custom Path", exp, "User specified target"))
+    else:
+        scan_list = default_candidates
+
+    targets = []
+    total_bytes = 0
+    seen_paths = set()
+    min_size = 0 if custom_paths else 10 * 1024 * 1024
+
+    for name, p, desc in scan_list:
+        if p in seen_paths or not os.path.exists(p):
+            continue
+        seen_paths.add(p)
+
+        folder_size = 0
+        file_count = 0
+        try:
+            for root, dirs, files in os.walk(p):
+                for f in files:
+                    try:
+                        fp = os.path.join(root, f)
+                        if not os.path.islink(fp):
+                            folder_size += os.path.getsize(fp)
+                            file_count += 1
+                    except (OSError, PermissionError):
+                        continue
+        except Exception:
+            continue
+
+        if folder_size > min_size:
+            total_bytes += folder_size
+            targets.append({
+                "name": name,
+                "path": p,
+                "size_mb": round(folder_size / (1024 ** 2), 1),
+                "size_str": format_bytes(folder_size),
+                "file_count": file_count,
+                "description": desc,
+                "safe_to_clean": True
+            })
+
+    targets.sort(key=lambda x: x["size_mb"], reverse=True)
+    return {
+        "success": True,
+        "total_reclaimable_bytes": total_bytes,
+        "total_reclaimable_str": format_bytes(total_bytes),
+        "total_targets_found": len(targets),
+        "targets": targets
+    }
