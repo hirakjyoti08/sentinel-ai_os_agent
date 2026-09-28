@@ -80,6 +80,104 @@ def get_system_info() -> Dict[str, Any]:
     }
 
 
+def get_battery_and_thermal() -> Dict[str, Any]:
+    """Get battery percentage, charging state, cycle count, and thermal throttling state."""
+    batt = None
+    try:
+        batt = psutil.sensors_battery()
+    except Exception:
+        pass
+
+    has_battery = batt is not None
+    percent = round(batt.percent, 1) if batt else None
+    power_plugged = batt.power_plugged if batt else True
+
+    status = "No Battery (Desktop/Server)"
+    time_remaining_str = None
+    cycle_count = None
+    condition = "Normal"
+    thermal_state = "Nominal (Cool / No throttling)"
+    thermal_throttling = False
+
+    if has_battery:
+        if power_plugged:
+            status = "AC Connected (Full)" if percent and percent >= 98 else "Charging (AC Connected)"
+        else:
+            status = "Discharging (Battery Power)"
+
+        if batt and batt.secsleft and batt.secsleft > 0 and batt.secsleft != psutil.POWER_TIME_UNLIMITED:
+            hrs = int(batt.secsleft // 3600)
+            mins = int((batt.secsleft % 3600) // 60)
+            time_remaining_str = f"{hrs}h {mins:02d}m remaining"
+
+    # macOS specific enrichment via pmset & ioreg
+    if platform.system() == "Darwin":
+        try:
+            pm = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=1.0)
+            if pm.returncode == 0 and pm.stdout:
+                out = pm.stdout.lower()
+                if "discharging" in out:
+                    status = "Discharging (Battery Power)"
+                elif "charging" in out:
+                    status = "Charging (AC Connected)"
+                elif "charged" in out or "finishing charge" in out:
+                    status = "Fully Charged (AC Connected)"
+
+                rem_match = re.search(r'(\d+:\d+)\s+remaining', pm.stdout)
+                if rem_match:
+                    parts = rem_match.group(1).split(":")
+                    time_remaining_str = f"{int(parts[0])}h {int(parts[1]):02d}m remaining"
+
+            ior = subprocess.run(["ioreg", "-rn", "AppleSmartBattery"], capture_output=True, text=True, timeout=1.0)
+            if ior.returncode == 0 and ior.stdout:
+                c_match = re.search(r'"CycleCount"\s*=\s*(\d+)', ior.stdout)
+                if c_match:
+                    cycle_count = int(c_match.group(1))
+                cond_match = re.search(r'"BatteryHealthMetric"\s*=\s*"?([^",\n]+)', ior.stdout)
+                if cond_match:
+                    condition = cond_match.group(1).strip()
+
+            th = subprocess.run(["pmset", "-g", "therm"], capture_output=True, text=True, timeout=1.0)
+            if th.returncode == 0 and th.stdout:
+                th_out = th.stdout.lower()
+                if "warning" in th_out and "no thermal warning" not in th_out:
+                    thermal_state = "Warning: Elevated thermal pressure"
+                    thermal_throttling = True
+                elif "critical" in th_out:
+                    thermal_state = "Critical: Severe thermal throttling active"
+                    thermal_throttling = True
+                else:
+                    thermal_state = "Nominal (Cool / No throttling)"
+                    thermal_throttling = False
+        except Exception:
+            pass
+    elif platform.system() == "Linux":
+        try:
+            temps = psutil.sensors_temperatures()
+            if temps:
+                max_temp = max(t.current for tlist in temps.values() for t in tlist if hasattr(t, 'current'))
+                if max_temp > 85.0:
+                    thermal_state = f"High: {max_temp:.1f}°C (Potential throttling)"
+                    thermal_throttling = True
+                else:
+                    thermal_state = f"Nominal: {max_temp:.1f}°C"
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "has_battery": has_battery,
+        "percent": percent,
+        "power_plugged": power_plugged,
+        "status": status,
+        "time_remaining": time_remaining_str,
+        "cycle_count": cycle_count,
+        "condition": condition,
+        "thermal_state": thermal_state,
+        "thermal_throttling": thermal_throttling
+    }
+
+
 def get_top_memory_processes(n: int = 10) -> Dict[str, Any]:
     """Get top N processes by memory usage."""
     result = list_processes()

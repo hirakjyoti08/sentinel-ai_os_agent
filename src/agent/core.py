@@ -10,7 +10,7 @@ from groq import Groq
 from dotenv import load_dotenv
 
 from src.tools.registry import get_tool_schemas, get_gemini_tool_schemas, execute_tool, get_tool_tiers
-from src.safety.permissions import get_tool_tier, confirm_action
+from src.safety.permissions import get_tool_tier, confirm_action, is_protected_process
 from src.safety.circuit_breaker import CircuitBreaker
 from src.storage.audit_log import log_action, update_result, get_last_action, mark_undone
 from src.agent.prompts import SYSTEM_PROMPT, PLANNING_PROMPT, REFLECTION_PROMPT, TOOL_RESULT_SUMMARY_PROMPT
@@ -636,6 +636,31 @@ class Agent:
                     return "\n".join(lines)
                 return f"Error getting CPU: {result.get('error')}"
         
+        # Battery and thermal queries
+        if any(kw in user_lower for kw in ['battery', 'charge', 'charging', 'thermal', 'overheating', 'temperature', 'fan', 'throttle', 'throttling']):
+            result = execute_tool('get_battery_and_thermal', {})
+            if result.get('success'):
+                lines = [
+                    "| Component | Status | Details |",
+                    "|---|---|---|",
+                ]
+                if result.get('has_battery'):
+                    pct = result.get('percent', 0)
+                    graph = _render_ascii_bar(pct) if pct is not None else "-"
+                    lines.append(f"| Battery Level | {pct:.1f}% | {graph} |")
+                    lines.append(f"| Power State | {result.get('status')} | {result.get('time_remaining') or 'N/A'} |")
+                    if result.get('cycle_count'):
+                        lines.append(f"| Battery Health | {result.get('condition')} | {result.get('cycle_count')} cycles |")
+                else:
+                    lines.append("| Battery | Desktop / No Battery | AC Power Connected |")
+                
+                therm = result.get('thermal_state', 'Nominal')
+                throttling = result.get('thermal_throttling', False)
+                th_status = "⚠️ Throttling" if throttling else "Normal / Cool"
+                lines.append(f"| Thermal State | {th_status} | {therm} |")
+                return "\n".join(lines)
+            return f"Error getting battery/thermal info: {result.get('error')}"
+
         # Memory queries
         if any(kw in user_lower for kw in ['memory', 'ram', 'mem']):
             n = 5
@@ -973,6 +998,10 @@ class Agent:
             
             if target['pid'] <= 1:
                 return f"Cannot kill system process PID {target['pid']} ({target['name']})"
+
+            is_prot, prot_reason = is_protected_process(target['pid'], target.get('name'))
+            if is_prot:
+                return f"🛡️ Safety Protection: {prot_reason}. Termination blocked."
             
             confirm_data = {
                 "type": "confirm_kill",
@@ -994,9 +1023,23 @@ class Agent:
             if not matches:
                 return f"No running process found matching '{target_name}'"
             
+            # Filter out protected processes
+            unprotected_matches = []
+            protected_hits = []
+            for p in matches:
+                is_p, r = is_protected_process(p['pid'], p['name'])
+                if is_p:
+                    protected_hits.append((p, r))
+                else:
+                    unprotected_matches.append(p)
+
+            if not unprotected_matches and protected_hits:
+                first_hit = protected_hits[0]
+                return f"🛡️ Safety Protection: {first_hit[1]}. Termination blocked."
+
+            valid_matches = unprotected_matches
             # Check if user asked to kill all
             is_kill_all = bool(re.search(r'\b(all|every)\b', user_input, re.IGNORECASE))
-            valid_matches = [p for p in matches if p['pid'] > 1]
             if not valid_matches:
                 return f"Cannot kill critical system process matching '{target_name}'"
             

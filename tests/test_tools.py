@@ -463,6 +463,68 @@ class TestTUIComponents:
 
         asyncio.run(_check())
 
+    def test_protected_process_whitelist(self):
+        from src.safety.permissions import is_protected_process
+        # PID 1 init is protected
+        is_p, _ = is_protected_process(1)
+        assert is_p is True
+
+        # Critical names are protected
+        is_p, _ = is_protected_process(9999, "WindowServer")
+        assert is_p is True
+        is_p, _ = is_protected_process(9999, "launchd")
+        assert is_p is True
+        is_p, _ = is_protected_process(9999, "kernel_task")
+        assert is_p is True
+
+        # Normal user process is not protected
+        is_p, _ = is_protected_process(9999, "my_python_server")
+        assert is_p is False
+
+    def test_kill_and_pause_blocked_for_protected(self):
+        from src.tools.destructive import kill_process
+        from src.tools.reversible import pause_process
+
+        kill_res = kill_process(1)
+        assert kill_res["success"] is False
+        assert "Operation denied" in kill_res["error"]
+
+        pause_res = pause_process(1)
+        assert pause_res["success"] is False
+        assert "Operation denied" in pause_res["error"]
+
+    def test_get_battery_and_thermal_tool(self):
+        from src.tools.read_only import get_battery_and_thermal
+        res = get_battery_and_thermal()
+        assert res["success"] is True
+        assert "has_battery" in res
+        assert "status" in res
+        assert "thermal_state" in res
+        assert "thermal_throttling" in res
+
+    def test_anomaly_event_with_target_metadata(self):
+        from src.monitor.watcher import SystemWatcher, SystemMetrics, AnomalyEvent
+        captured = []
+        watcher = SystemWatcher(
+            interval=1.0,
+            cpu_threshold=80.0,
+            on_anomaly=lambda event, metrics: captured.append((event, metrics))
+        )
+        fake_metrics = SystemMetrics(
+            cpu_percent=95.0,
+            memory_percent=40.0,
+            disk_percent=30.0,
+            top_processes=[{"pid": 4567, "name": "stress_test", "cpu_percent": 90.0, "memory_percent": 5.0}],
+            timestamp=123456789.0
+        )
+        watcher._check_anomalies(fake_metrics)
+        assert len(captured) >= 1
+        event, _ = captured[0]
+        assert isinstance(event, AnomalyEvent)
+        assert event.offending_pid == 4567
+        assert event.offending_name == "stress_test"
+        assert event.suggested_action == "kill"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -8,10 +8,15 @@ import subprocess
 import platform
 import time
 from typing import Dict, Any
+from src.safety.permissions import is_protected_process
 
 
 def kill_process(pid: int, signal: int = signal_module.SIGKILL, **kwargs) -> Dict[str, Any]:
     """Kill a process (SIGKILL by default). DESTRUCTIVE - cannot be undone."""
+    is_prot, prot_reason = is_protected_process(pid)
+    if is_prot:
+        return {"success": False, "error": f"Operation denied: {prot_reason}"}
+
     signal_num = kwargs.get("signal_num", signal)
     try:
         proc = psutil.Process(pid)

@@ -39,6 +39,20 @@ class SystemMetrics:
     net_history: list = field(default_factory=list)
 
 
+@dataclass
+class AnomalyEvent:
+    """Structured representation of a detected system anomaly with actionable remediation."""
+    category: str  # "cpu", "memory", "disk", "gpu"
+    message: str
+    offending_pid: Optional[int] = None
+    offending_name: Optional[str] = None
+    offending_metric: Optional[str] = None
+    suggested_action: Optional[str] = None  # "kill", "throttle", "clean"
+
+    def __str__(self) -> str:
+        return self.message
+
+
 class SystemWatcher:
     """Background thread that polls system metrics and detects anomalies."""
     
@@ -191,17 +205,61 @@ class SystemWatcher:
         )
     
     def _check_anomalies(self, metrics: SystemMetrics):
-        """Check for anomalies and trigger callback."""
+        """Check for anomalies and trigger callback with actionable target metadata."""
         anomalies = []
         
         if metrics.cpu_percent > self.cpu_threshold:
-            anomalies.append(f"High CPU usage: {metrics.cpu_percent:.1f}%")
+            offending_pid = None
+            offending_name = None
+            offending_metric = None
+            if metrics.top_processes:
+                top = metrics.top_processes[0]
+                offending_pid = top.get('pid')
+                offending_name = top.get('name')
+                offending_metric = f"{top.get('cpu_percent', 0):.1f}% CPU"
+
+            anomalies.append(AnomalyEvent(
+                category="cpu",
+                message=f"High CPU usage: {metrics.cpu_percent:.1f}%",
+                offending_pid=offending_pid,
+                offending_name=offending_name,
+                offending_metric=offending_metric,
+                suggested_action="kill"
+            ))
+
         if metrics.gpu_percent is not None and metrics.gpu_percent > self.gpu_threshold:
-            anomalies.append(f"High GPU usage: {metrics.gpu_percent:.1f}%")
+            anomalies.append(AnomalyEvent(
+                category="gpu",
+                message=f"High GPU usage: {metrics.gpu_percent:.1f}%",
+                suggested_action="inspect"
+            ))
+
         if metrics.memory_percent > self.memory_threshold:
-            anomalies.append(f"High memory usage: {metrics.memory_percent:.1f}%")
+            offending_pid = None
+            offending_name = None
+            offending_metric = None
+            if metrics.top_processes:
+                top = max(metrics.top_processes, key=lambda x: x.get('memory_percent') or 0, default=None)
+                if top:
+                    offending_pid = top.get('pid')
+                    offending_name = top.get('name')
+                    offending_metric = f"{top.get('memory_percent', 0):.1f}% RAM"
+
+            anomalies.append(AnomalyEvent(
+                category="memory",
+                message=f"High memory usage: {metrics.memory_percent:.1f}%",
+                offending_pid=offending_pid,
+                offending_name=offending_name,
+                offending_metric=offending_metric,
+                suggested_action="throttle"
+            ))
+
         if metrics.disk_percent > self.disk_threshold:
-            anomalies.append(f"High disk usage: {metrics.disk_percent:.1f}%")
+            anomalies.append(AnomalyEvent(
+                category="disk",
+                message=f"High disk usage: {metrics.disk_percent:.1f}% ({metrics.disk_free_gb} GB free)",
+                suggested_action="clean"
+            ))
         
         for anomaly in anomalies:
             if self.on_anomaly:

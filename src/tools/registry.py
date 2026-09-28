@@ -47,6 +47,13 @@ TOOL_DEFINITIONS = [
         "function": read_only.get_system_info
     },
     {
+        "name": "get_battery_and_thermal",
+        "description": "Get battery charge percentage, charging status, time remaining, cycle count, and thermal throttling state",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+        "tier": "read_only",
+        "function": read_only.get_battery_and_thermal
+    },
+    {
         "name": "get_top_memory_processes",
         "description": "Get top N processes by memory usage",
         "parameters": {

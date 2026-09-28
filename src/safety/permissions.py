@@ -1,15 +1,50 @@
 import sys
 from typing import Tuple, Callable, Optional
-from src.tools.registry import get_tool_tiers
 
 
 TIERS = ["read_only", "reversible", "destructive"]
-TOOL_TIERS = get_tool_tiers()
+_TOOL_TIERS = None
+
+# Critical OS system processes that must NEVER be terminated or paused
+PROTECTED_PROCESS_NAMES = {
+    # Unix & Darwin Kernel/Init
+    "kernel_task", "launchd", "init", "systemd",
+    # macOS Window Server & Core Desktop UI
+    "windowserver", "loginwindow", "finder", "dock", "systemuiserver", "controlcenter",
+    # Critical System Daemons
+    "securityd", "powerd", "diskarbitrationd", "coreaudiod", "syslogd", "kextd",
+    "distnoted", "opendirectoryd", "notifyd", "cfprefsd", "fseventsd", "mds",
+    # Linux Core Services
+    "dbus-daemon", "xorg", "wayland", "gnome-shell", "systemd-journald", "systemd-udevd",
+}
+
+
+def is_protected_process(pid: int, name: Optional[str] = None) -> Tuple[bool, str]:
+    """Check if a process is a protected system process that must not be killed or paused."""
+    if pid <= 1:
+        return True, f"PID {pid} is an essential system init process"
+
+    proc_name = name
+    if not proc_name:
+        try:
+            import psutil
+            proc_name = psutil.Process(pid).name()
+        except Exception:
+            pass
+
+    if proc_name and proc_name.lower().strip() in PROTECTED_PROCESS_NAMES:
+        return True, f"'{proc_name}' (PID {pid}) is a critical OS system process required for system stability"
+
+    return False, ""
 
 
 def get_tool_tier(tool_name: str) -> str:
     """Get the tier for a tool."""
-    return TOOL_TIERS.get(tool_name, "destructive")  # Default to most restrictive
+    global _TOOL_TIERS
+    if _TOOL_TIERS is None:
+        from src.tools.registry import get_tool_tiers
+        _TOOL_TIERS = get_tool_tiers()
+    return _TOOL_TIERS.get(tool_name, "destructive")  # Default to most restrictive
 
 
 def requires_confirmation(tier: str) -> bool:

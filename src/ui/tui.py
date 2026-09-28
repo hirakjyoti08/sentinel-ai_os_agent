@@ -885,14 +885,33 @@ class AIOSAgentApp(App):
         if self._audit_panel:
             self._audit_panel.refresh_log()
     
-    def on_anomaly_detected(self, anomaly: str, metrics: SystemMetrics):
+    def on_anomaly_detected(self, anomaly: Any, metrics: SystemMetrics):
         """Called when watcher detects an anomaly (from background thread)."""
-        if self._chat_panel:
-            self.call_from_thread(
-                self._chat_panel.add_message,
-                "system",
-                f"⚠️ Anomaly detected: {anomaly}"
+        if not self._chat_panel:
+            return
+
+        msg = f"⚠️ Anomaly detected: {str(anomaly)}"
+        offending_pid = getattr(anomaly, "offending_pid", None)
+        offending_name = getattr(anomaly, "offending_name", None)
+        offending_metric = getattr(anomaly, "offending_metric", None)
+        suggested_action = getattr(anomaly, "suggested_action", None)
+
+        if offending_pid and offending_name:
+            remediation = (
+                f"🔥 Primary Consumer: PID {offending_pid} ({offending_name} • {offending_metric})\n"
+                f"💡 Quick Remediation: Click [▲ Kill CPU] or enter 'kill process {offending_pid}' to terminate."
             )
+            full_msg = f"{msg}\n{remediation}"
+        elif suggested_action == "clean":
+            full_msg = f"{msg}\n💡 Quick Remediation: Enter 'free up disk space' to analyze and reclaim storage."
+        else:
+            full_msg = msg
+
+        self.call_from_thread(
+            self._chat_panel.add_message,
+            "system",
+            full_msg
+        )
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button click events."""

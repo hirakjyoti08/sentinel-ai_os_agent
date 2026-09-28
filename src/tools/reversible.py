@@ -5,10 +5,15 @@ import os
 import shutil
 import signal
 from typing import Dict, Any
+from src.safety.permissions import is_protected_process
 
 
 def pause_process(pid: int) -> Dict[str, Any]:
     """Pause a process (SIGSTOP). Reversible with resume_process."""
+    is_prot, prot_reason = is_protected_process(pid)
+    if is_prot:
+        return {"success": False, "error": f"Operation denied: {prot_reason}"}
+
     try:
         proc = psutil.Process(pid)
         proc.suspend()
