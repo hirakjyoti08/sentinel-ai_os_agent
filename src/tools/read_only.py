@@ -65,17 +65,65 @@ def get_memory_usage() -> Dict[str, Any]:
     }
 
 
+_MAC_HARDWARE_CACHE = None
+
+
 def get_system_info() -> Dict[str, Any]:
-    """Get hardware architecture, OS platform, CPU cores, and total RAM."""
+    """Get hardware architecture, OS platform, Mac model name, chip, CPU cores, and total RAM."""
+    global _MAC_HARDWARE_CACHE
     vm = psutil.virtual_memory()
+
+    model_name = "Mac" if platform.system() == "Darwin" else platform.uname().machine
+    chip_name = platform.processor() or platform.machine()
+    model_id = None
+
+    if platform.system() == "Darwin":
+        if _MAC_HARDWARE_CACHE is None:
+            _MAC_HARDWARE_CACHE = {}
+            try:
+                res = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string", "hw.model"],
+                    capture_output=True, text=True, timeout=1.0
+                )
+                if res.returncode == 0:
+                    lines = [line.strip() for line in res.stdout.strip().splitlines() if line.strip()]
+                    if len(lines) >= 1 and lines[0]:
+                        _MAC_HARDWARE_CACHE["chip"] = lines[0]
+                    if len(lines) >= 2 and lines[1]:
+                        _MAC_HARDWARE_CACHE["model_id"] = lines[1]
+            except Exception:
+                pass
+
+            try:
+                prof = subprocess.run(
+                    ["system_profiler", "SPHardwareDataType", "-detailLevel", "mini"],
+                    capture_output=True, text=True, timeout=2.0
+                )
+                if prof.returncode == 0:
+                    for line in prof.stdout.splitlines():
+                        line_str = line.strip()
+                        if line_str.startswith("Model Name:"):
+                            _MAC_HARDWARE_CACHE["model_name"] = line_str.split(":", 1)[1].strip()
+                        elif line_str.startswith("Chip:") and "chip" not in _MAC_HARDWARE_CACHE:
+                            _MAC_HARDWARE_CACHE["chip"] = line_str.split(":", 1)[1].strip()
+            except Exception:
+                pass
+
+        model_name = _MAC_HARDWARE_CACHE.get("model_name", "Mac")
+        chip_name = _MAC_HARDWARE_CACHE.get("chip", chip_name)
+        model_id = _MAC_HARDWARE_CACHE.get("model_id")
+
     return {
         "success": True,
-        "os": platform.system(),
+        "os": "macOS" if platform.system() == "Darwin" else platform.system(),
+        "model_name": model_name,
+        "chip": chip_name,
+        "model_identifier": model_id,
         "os_release": platform.release(),
         "machine": platform.machine(),
         "cpu_count_logical": psutil.cpu_count(logical=True),
         "cpu_count_physical": psutil.cpu_count(logical=False),
-        "total_ram_gb": round(vm.total / 1024**3, 2),
+        "total_ram_gb": round(vm.total / 1024**3, 1),
         "platform": platform.platform()
     }
 

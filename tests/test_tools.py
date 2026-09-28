@@ -588,6 +588,24 @@ class TestTUIComponents:
         assert panel._is_streaming is False
         assert panel._stream_buffer == ""
 
+    def test_get_system_info_hardware_enrichment(self):
+        from src.tools.read_only import get_system_info
+        info = get_system_info()
+        assert info["success"] is True
+        assert "model_name" in info
+        assert "chip" in info
+        assert "total_ram_gb" in info
+        assert info["total_ram_gb"] > 0
+        if info.get("os") == "macOS":
+            assert info["chip"] != ""
+            assert info["model_name"] != ""
+
+    def test_system_prompt_enriched_with_hardware(self):
+        from src.agent.prompts import get_system_prompt
+        prompt = get_system_prompt()
+        assert "HOST SYSTEM ENVIRONMENT" in prompt
+        assert "RULES FOR HARDWARE & SOFTWARE COMPATIBILITY" in prompt
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

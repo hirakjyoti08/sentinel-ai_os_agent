@@ -335,7 +335,13 @@ class SystemStatsPanel(Container):
         # System info subtitle
         cores_str = f"{m.cpu_cores} Cores" if m.cpu_cores else "Multi-Core"
         uptime_str = f"Uptime: {m.uptime_hours:.1f}h" if m.uptime_hours is not None else ""
-        sys_subtitle = f"macOS (Apple Silicon) • {cores_str}" + (f" • {uptime_str}" if uptime_str else "")
+        try:
+            from src.tools.read_only import get_system_info
+            sys_info = get_system_info()
+            model_chip = f"{sys_info.get('model_name', 'Mac')} ({sys_info.get('chip', 'Apple Silicon')})"
+        except Exception:
+            model_chip = "macOS (Apple Silicon)"
+        sys_subtitle = f"{model_chip} • {cores_str}" + (f" • {uptime_str}" if uptime_str else "")
         
         # CPU meter & sparkline
         cpu_gauge = render_gauge_bar(m.cpu_percent, width=12)

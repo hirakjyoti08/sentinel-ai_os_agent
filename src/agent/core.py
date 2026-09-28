@@ -15,7 +15,7 @@ from src.tools.registry import get_tool_schemas, get_gemini_tool_schemas, execut
 from src.safety.permissions import get_tool_tier, confirm_action, is_protected_process
 from src.safety.circuit_breaker import CircuitBreaker
 from src.storage.audit_log import log_action, update_result, get_last_action, mark_undone
-from src.agent.prompts import SYSTEM_PROMPT, PLANNING_PROMPT, REFLECTION_PROMPT, TOOL_RESULT_SUMMARY_PROMPT
+from src.agent.prompts import SYSTEM_PROMPT, PLANNING_PROMPT, REFLECTION_PROMPT, TOOL_RESULT_SUMMARY_PROMPT, get_system_prompt
 from src.agent.memory import AgentMemory
 from src.llm.lmstudio_client import LMStudioClient
 
@@ -414,7 +414,7 @@ class Agent:
 
         # Build multi-turn context messages for the AI model
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": get_system_prompt()},
         ]
         recent_history = self.memory.get_recent_context(n=4)
         for interaction in recent_history[:-1]:

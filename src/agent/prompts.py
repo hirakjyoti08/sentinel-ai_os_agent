@@ -55,3 +55,34 @@ TOOL_RESULT_SUMMARY_PROMPT = """
 Summarize the tool result in a concise, graphical way using Markdown tables and ASCII bar graphs ([████░░░░░░] XX%).
 Write minimal text (1-2 sentences max). Do NOT write long paragraphs.
 """
+
+
+def get_system_prompt() -> str:
+    """Return SYSTEM_PROMPT dynamically enriched with host hardware specs."""
+    try:
+        from src.tools.read_only import get_system_info
+        info = get_system_info()
+        model_name = info.get("model_name", "Mac")
+        chip = info.get("chip", "Apple Silicon")
+        model_id = info.get("model_identifier")
+        cores = info.get("cpu_count_logical", "Multi-Core")
+        ram_gb = info.get("total_ram_gb", 16.0)
+        os_name = info.get("os", "macOS")
+        
+        id_str = f" ({model_id})" if model_id else ""
+        host_info = (
+            f"\n\nHOST SYSTEM ENVIRONMENT:\n"
+            f"- Exact Machine Model: {model_name}{id_str}\n"
+            f"- Chip / CPU: {chip}\n"
+            f"- CPU Cores: {cores} Cores\n"
+            f"- Installed Physical RAM: {ram_gb} GB\n"
+            f"- Operating System: {os_name}\n"
+            f"RULES FOR HARDWARE & SOFTWARE COMPATIBILITY:\n"
+            f"1. ALWAYS refer to the EXACT host model above (e.g. '{model_name} with {chip} and {ram_gb} GB RAM'). NEVER hallucinate, guess, or invent different specs (e.g. do NOT say 'M4 Pro' or '24 GB' if the host is {chip} with {ram_gb} GB RAM).\n"
+            f"2. For gaming / software queries on macOS (e.g. 'can I run GTA 5', 'can I run Cyberpunk'):\n"
+            f"   - Explicitly clarify if the title has a native macOS port or requires compatibility software (e.g. CrossOver, Whisky, Heroic, Apple Game Porting Toolkit).\n"
+            f"   - Evaluate realistic performance based on the user's specific chip ({chip}) and unified memory ({ram_gb} GB).\n"
+        )
+        return SYSTEM_PROMPT + host_info
+    except Exception:
+        return SYSTEM_PROMPT
