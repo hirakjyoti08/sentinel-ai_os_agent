@@ -10,18 +10,18 @@
 
 The screenshot above demonstrates **SENTINEL** diagnosing, inspecting, and managing an Apple Silicon macOS system in real time:
 
-1. **⚡ AI Engine Hierarchy & Status Bar (Top Left)**:
+1. ** AI Engine Hierarchy & Status Bar (Top Left)**:
    - Displays real-time availability across local models (**LM Studio**) and high-speed cloud providers (**Groq Qwen**, **Google Gemini**), automatically falling back if any service is offline or rate-limited.
-2. **🧠 Autonomous System Hardware Inspection (Chat Log)**:
+2. ** Autonomous System Hardware Inspection (Chat Log)**:
    - When asked *"can i run android studio here"*, SENTINEL autonomously queries low-level OS telemetry (`get_system_info`, `get_memory_usage`, `get_cpu_usage`) to inspect CPU architecture (`arm64`), core count (`10 Cores`), and total RAM (`16.0 GB`).
    - Automatically renders structured Markdown evaluation tables with ASCII status gauges (`[████████░░] 6.0%`) and a definitive hardware verdict.
-3. **🔴 Safety-First Destructive Confirmations**:
+3. ** Safety-First Destructive Confirmations**:
    - When given destructive commands like *"kill spotify"*, SENTINEL fast-paths target detection in <20ms, identifies matching PIDs (`PID 737`), and enforces an interactive safety confirmation prompt before executing termination.
-4. **📊 Live Telemetry, Bandwidth & Sparklines (Top Right Panel)**:
+4. ** Live Telemetry, Bandwidth & Sparklines (Top Right Panel)**:
    - Live CPU, GPU (Apple Silicon VRAM), Memory, Disk usage, and real-time bidirectional network transfer speeds (`NET ↓ 7.4 KB/s ↑ 6.6 KB/s`) accompanied by dynamic Unicode sparkline trendlines (`▂▃▅▇`).
-5. **⚡ Interactive Process & Port Click Actions (Middle Right Panels)**:
+5. ** Interactive Process & Port Click Actions (Middle Right Panels)**:
    - Live process inspection and listening port monitors with instant `[ ✕ Kill ]` and `[ ✕ Close ]` buttons, enabling fast remediation without manual typing.
-6. **📜 Reversible Audit Trail (Bottom Right Panel)**:
+6. ** Reversible Audit Trail (Bottom Right Panel)**:
    - Persistent SQLite audit log capturing every operation color-coded by safety tier (`READ_ONLY`, `REVERSIBLE`, `DESTRUCTIVE`), with instant one-key undo support (`Ctrl+U`).
 
 ---
