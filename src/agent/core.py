@@ -17,7 +17,7 @@ from src.safety.circuit_breaker import CircuitBreaker
 from src.storage.audit_log import log_action, update_result, get_last_action, mark_undone
 from src.agent.prompts import SYSTEM_PROMPT, PLANNING_PROMPT, REFLECTION_PROMPT, TOOL_RESULT_SUMMARY_PROMPT, get_system_prompt
 from src.agent.memory import AgentMemory
-from src.llm.lmstudio_client import LMStudioClient
+from src.llm.nemotron_client import NemotronClient
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -46,21 +46,21 @@ class Agent:
         self.tool_tiers = get_tool_tiers()
     
     def _init_llm_clients(self):
-        """Initialize LLM clients with priority: LM Studio -> Groq -> Gemini."""
+        """Initialize LLM clients with priority: Nemotron -> Groq -> Gemini."""
         load_dotenv()
 
-        # LM Studio (primary - local, unlimited)
-        self.lmstudio_client = LMStudioClient()
-        self.lmstudio_available = self.lmstudio_client.is_available()
-        self.llm_provider_status["lmstudio"] = {
-            "configured": True,
-            "available": self.lmstudio_available,
-            "hint": "Ensure LM Studio server is running and has a model loaded.",
+        # NVIDIA Nemotron (primary - cloud API)
+        self.nemotron_client = NemotronClient()
+        self.nemotron_available = self.nemotron_client.is_available()
+        self.llm_provider_status["nemotron"] = {
+            "configured": self.nemotron_client.configured,
+            "available": self.nemotron_available,
+            "hint": "Set NVIDIA_API_KEY in .env. Get one from https://build.nvidia.com",
         }
-        if self.lmstudio_available:
-            logger.info("LM Studio initialized as primary LLM")
+        if self.nemotron_available:
+            logger.info("NVIDIA Nemotron initialized as primary LLM")
         else:
-            logger.info("LM Studio not available, will use cloud fallbacks")
+            logger.info("NVIDIA Nemotron not available, will use cloud fallbacks")
 
         # Groq (fallback)
         groq_key = os.getenv("GROQ_API_KEY")
@@ -99,7 +99,7 @@ class Agent:
             }
     
     def _call_llm(self, messages: List[Dict], tools: List[Dict] = None, on_token: Optional[Callable[[str], None]] = None) -> Any:
-        """Call LLM with fallback: LM Studio -> Groq -> Gemini."""
+        """Call LLM with fallback: Nemotron -> Groq -> Gemini."""
         if tools is None:
             openai_tools = self.tool_schemas_openai
             gemini_tools = [{"function_declarations": self.tool_schemas_gemini}]
@@ -118,25 +118,94 @@ class Agent:
 
         provider_errors = []
         
-        # Try LM Studio first (primary - local, unlimited)
-        if self.lmstudio_available and self.lmstudio_client:
+        # Try NVIDIA Nemotron first (primary - cloud API)
+        if self.nemotron_available and self.nemotron_client:
             try:
-                groq_messages = self._convert_to_openai_format(messages)
+                nemotron_messages = self._convert_to_openai_format(messages)
                 kwargs = {}
                 if openai_tools:
                     kwargs["tools"] = openai_tools
                     kwargs["tool_choice"] = tool_choice
-                response = self.lmstudio_client.chat_completion(
-                    messages=groq_messages,
-                    **kwargs
-                )
-                logger.debug("LM Studio call successful")
-                return response
+
+                if on_token:
+                    # Stream tokens in real time from Nemotron
+                    stream = self.nemotron_client.chat_completion(
+                        messages=nemotron_messages,
+                        stream=True,
+                        **kwargs
+                    )
+                    accumulated_content = []
+                    tool_calls_dict = {}
+
+                    for chunk in stream:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                            for tc in delta.tool_calls:
+                                idx = getattr(tc, 'index', 0)
+                                if idx not in tool_calls_dict:
+                                    tool_calls_dict[idx] = {
+                                        "id": getattr(tc, 'id', f"call_{idx}") or f"call_{idx}",
+                                        "name": "",
+                                        "arguments": ""
+                                    }
+                                if getattr(tc, 'id', None):
+                                    tool_calls_dict[idx]["id"] = tc.id
+                                fn = getattr(tc, 'function', None)
+                                if fn:
+                                    if getattr(fn, 'name', None):
+                                        tool_calls_dict[idx]["name"] += fn.name
+                                    if getattr(fn, 'arguments', None):
+                                        tool_calls_dict[idx]["arguments"] += fn.arguments
+                        if hasattr(delta, 'content') and delta.content:
+                            accumulated_content.append(delta.content)
+                            if not tool_calls_dict:
+                                on_token(delta.content)
+
+                    if tool_calls_dict:
+                        mock_tcs = []
+                        for idx in sorted(tool_calls_dict.keys()):
+                            t_info = tool_calls_dict[idx]
+                            mock_tcs.append(
+                                types.SimpleNamespace(
+                                    id=t_info["id"],
+                                    type="function",
+                                    function=types.SimpleNamespace(
+                                        name=t_info["name"],
+                                        arguments=t_info["arguments"]
+                                    )
+                                )
+                            )
+                        mock_msg = types.SimpleNamespace(
+                            content="".join(accumulated_content) if accumulated_content else None,
+                            tool_calls=mock_tcs,
+                            reasoning_content=None
+                        )
+                    else:
+                        mock_msg = types.SimpleNamespace(
+                            content="".join(accumulated_content),
+                            tool_calls=None,
+                            reasoning_content=None
+                        )
+                    res = types.SimpleNamespace(
+                        choices=[types.SimpleNamespace(message=mock_msg)],
+                        _streamed=True
+                    )
+                    logger.debug("Nemotron streaming call successful")
+                    return res
+                else:
+                    response = self.nemotron_client.chat_completion(
+                        messages=nemotron_messages,
+                        **kwargs
+                    )
+                    logger.debug("Nemotron call successful")
+                    return response
             except Exception as e:
-                provider_errors.append(f"LM Studio runtime error: {e}")
-                logger.warning(f"LM Studio error: {e}, falling back to Groq")
+                provider_errors.append(f"Nemotron runtime error: {e}")
+                logger.warning(f"Nemotron error: {e}, falling back to Groq")
         else:
-            provider_errors.append("LM Studio unavailable")
+            provider_errors.append("Nemotron unavailable")
         
         # Fallback to Groq
         if self.groq_client:
@@ -594,7 +663,7 @@ class Agent:
     def _build_llm_unavailable_message(self, raw_error: str) -> str:
         """Return actionable troubleshooting guidance when all LLM providers fail."""
         status_parts = []
-        for name in ["lmstudio", "groq", "gemini"]:
+        for name in ["nemotron", "groq", "gemini"]:
             state = self.llm_provider_status.get(name, {})
             configured = state.get("configured", False)
             available = state.get("available", False)
@@ -609,7 +678,7 @@ class Agent:
         return (
             "Error: All LLM providers are currently unavailable. "
             f"Status: {status_text}. "
-            "Fix: start LM Studio server, or set GROQ_API_KEY and/or GEMINI_API_KEY in .env, then restart the app. "
+            "Fix: set NVIDIA_API_KEY in .env (from https://build.nvidia.com), or set GROQ_API_KEY and/or GEMINI_API_KEY, then restart the app. "
             f"Details: {raw_error}"
         )
     

@@ -910,7 +910,7 @@ class AIOSAgentApp(App):
             return "[bold #58a6ff]⚡ AI ENGINES[/bold #58a6ff]  [dim #8b949e]Status initializing...[/dim #8b949e]"
 
         order = [
-            ("lmstudio", "LM Studio", "LOCAL"),
+            ("nemotron", "Nemotron", "CLOUD"),
             ("groq", "Groq (Qwen)", "CLOUD"),
             ("gemini", "Gemini", "CLOUD"),
         ]
