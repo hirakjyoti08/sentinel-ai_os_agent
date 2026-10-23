@@ -11,7 +11,7 @@
 The screenshot above demonstrates **SENTINEL** diagnosing, inspecting, and managing an Apple Silicon macOS system in real time:
 
 1. **AI Engine Hierarchy & Status Bar (Top Left)**:
-   - Displays real-time availability across local models (**LM Studio**) and high-speed cloud providers (**Groq Qwen**, **Google Gemini**), automatically falling back if any service is offline or rate-limited.
+   - Displays real-time availability across primary frontier models (**NVIDIA Nemotron Ultra 550B**) and high-speed fallback providers (**Groq Qwen**, **Google Gemini**), automatically falling back if any service is offline or rate-limited.
 2. **Autonomous System Hardware Inspection (Chat Log)**:
    - When asked *"can i run android studio here"*, SENTINEL autonomously queries low-level OS telemetry (`get_system_info`, `get_memory_usage`, `get_cpu_usage`) to inspect CPU architecture (`arm64`), core count (`10 Cores`), and total RAM (`16.0 GB`).
    - Automatically renders structured Markdown evaluation tables with ASCII status gauges (`[████████░░] 6.0%`) and a definitive hardware verdict.
@@ -36,7 +36,7 @@ The screenshot above demonstrates **SENTINEL** diagnosing, inspecting, and manag
 - **Multi-Step Reasoning**: Plan → Act → Observe → Reflect loop for complex troubleshooting tasks
 - **Live Reactive TUI Dashboard**: Three-panel Textual interface (interactive chat + live stats + audit log)
 - **Background Telemetry Watcher**: Autonomous anomaly detection and rolling network speed differentials
-- **Multi-LLM Hierarchy**: Local LM Studio (primary) with Groq (Qwen) and Gemini cloud fallbacks
+- **Multi-LLM Hierarchy**: NVIDIA Nemotron Ultra 550B (primary) with Groq (Qwen) and Gemini cloud fallbacks
 - **Automated Test Suite**: 47 comprehensive unit and integration tests passing with 100% coverage across tools and UI components
 
 ## Architecture
@@ -95,8 +95,8 @@ The screenshot above demonstrates **SENTINEL** diagnosing, inspecting, and manag
 
 ### Prerequisites
 - Python 3.11+
-- Groq API key (free at https://console.groq.com)
-- Optional: Gemini API key (free at https://aistudio.google.com)
+- NVIDIA API key (free credits at https://build.nvidia.com)
+- Optional fallbacks: Groq API key (https://console.groq.com) and Gemini API key (https://aistudio.google.com)
 
 ### Installation
 
@@ -109,7 +109,7 @@ pip install -e .
 
 # Configure API keys
 cp .env.example .env
-# Edit .env and add your GROQ_API_KEY (required) and GEMINI_API_KEY (optional)
+# Edit .env and add your NVIDIA_API_KEY (primary), plus optional GROQ_API_KEY and GEMINI_API_KEY
 
 # Initialize database
 python -c "from src.storage.audit_log import init_db; init_db()"
@@ -148,6 +148,8 @@ ai-os-agent/
 │   │   ├── core.py         # Plan-Act-Observe-Reflect loop
 │   │   ├── prompts.py      # System prompts
 │   │   └── memory.py       # Conversation memory
+│   ├── llm/
+│   │   └── nemotron_client.py # NVIDIA Nemotron API client (OpenAI-compatible)
 │   ├── tools/
 │   │   ├── registry.py     # Tool definitions & dispatcher
 │   │   ├── read_only.py    # 5 read-only tools
@@ -197,6 +199,7 @@ python -m pytest tests/ -v
 
 ## Known Limitations
 
+- NVIDIA NIM API: Free tier credits apply; requires internet access
 - Groq free tier: 100K tokens/day rate limit
 - Gemini free tier: 15 RPM, 1500 RPD rate limit
 - macOS: `list_open_ports` requires Full Disk Access or sudo
