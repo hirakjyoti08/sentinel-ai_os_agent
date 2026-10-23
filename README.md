@@ -36,8 +36,9 @@ The screenshot above demonstrates **SENTINEL** diagnosing, inspecting, and manag
 - **Multi-Step Reasoning**: Plan → Act → Observe → Reflect loop for complex troubleshooting tasks
 - **Live Reactive TUI Dashboard**: Three-panel Textual interface (interactive chat + live stats + audit log)
 - **Background Telemetry Watcher**: Autonomous anomaly detection and rolling network speed differentials
+- **Proactive Resource Alerts & Notifications**: Dispatches in-app floating toast alerts and native macOS/Linux desktop notification banners (with audio) upon high CPU/RAM/disk usage, equipped with smart PID attribution and cooldown throttling
 - **Multi-LLM Hierarchy**: NVIDIA Nemotron Ultra 550B (primary) with Groq (Qwen) and Gemini cloud fallbacks
-- **Automated Test Suite**: 47 comprehensive unit and integration tests passing with 100% coverage across tools and UI components
+- **Automated Test Suite**: 51 comprehensive unit and integration tests passing with 100% coverage across tools, UI components, and notifications
 
 ## Architecture
 
@@ -159,7 +160,8 @@ ai-os-agent/
 │   │   ├── permissions.py  # Tier enforcement & confirmations
 │   │   └── circuit_breaker.py # Rate limiting
 │   ├── monitor/
-│   │   └── watcher.py      # Background anomaly detector
+│   │   ├── watcher.py      # Background anomaly detector
+│   │   └── notifier.py     # Native OS desktop & audio notification dispatcher
 │   ├── storage/
 │   │   ├── audit_log.py    # SQLite audit trail
 │   │   └── db_schema.sql
@@ -194,6 +196,7 @@ python -m pytest tests/ -v
 ### Key Classes
 - `Agent` (src/agent/core.py) - Main orchestrator
 - `SystemWatcher` (src/monitor/watcher.py) - Background monitor
+- `NotificationCooldownManager` (src/monitor/notifier.py) - Throttled desktop alert dispatcher
 - `CircuitBreaker` (src/safety/circuit_breaker.py) - Rate limiter
 - `AIOSAgentApp` (src/ui/tui.py) - TUI application
 
@@ -204,7 +207,6 @@ python -m pytest tests/ -v
 - Gemini free tier: 15 RPM, 1500 RPD rate limit
 - macOS: `list_open_ports` requires Full Disk Access or sudo
 - `undo last` for `kill_process` attempts process restart (best effort)
-- Background monitor (Step 8) implemented but not fully integrated in TUI
 
 ## License
 
