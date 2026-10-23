@@ -1,5 +1,6 @@
 # Background Monitor - System Metrics Watcher (Step 8 - Stub)
 
+import os
 import threading
 import time
 import psutil
@@ -57,17 +58,17 @@ class SystemWatcher:
     """Background thread that polls system metrics and detects anomalies."""
     
     def __init__(self, 
-                 interval: float = 5.0,
-                 cpu_threshold: float = 90.0,
-                 memory_threshold: float = 90.0,
-                 disk_threshold: float = 90.0,
-                 gpu_threshold: float = 90.0,
-                 on_anomaly: Optional[Callable[[str, SystemMetrics], None]] = None):
+                 interval: float = 2.0,
+                 cpu_threshold: Optional[float] = None,
+                 memory_threshold: Optional[float] = None,
+                 disk_threshold: Optional[float] = None,
+                 gpu_threshold: Optional[float] = None,
+                 on_anomaly: Optional[Callable[[AnomalyEvent, SystemMetrics], None]] = None):
         self.interval = interval
-        self.cpu_threshold = cpu_threshold
-        self.memory_threshold = memory_threshold
-        self.disk_threshold = disk_threshold
-        self.gpu_threshold = gpu_threshold
+        self.cpu_threshold = cpu_threshold if cpu_threshold is not None else float(os.getenv("ALERT_CPU_THRESHOLD", "85.0"))
+        self.memory_threshold = memory_threshold if memory_threshold is not None else float(os.getenv("ALERT_MEMORY_THRESHOLD", "90.0"))
+        self.disk_threshold = disk_threshold if disk_threshold is not None else float(os.getenv("ALERT_DISK_THRESHOLD", "90.0"))
+        self.gpu_threshold = gpu_threshold if gpu_threshold is not None else float(os.getenv("ALERT_GPU_THRESHOLD", "90.0"))
         self.on_anomaly = on_anomaly
         self._thread: Optional[threading.Thread] = None
         self._running = False

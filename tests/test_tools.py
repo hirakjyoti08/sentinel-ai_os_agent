@@ -607,5 +607,31 @@ class TestTUIComponents:
         assert "RULES FOR HARDWARE & SOFTWARE COMPATIBILITY" in prompt
 
 
+    def test_notification_cooldown_manager(self):
+        from src.monitor.notifier import NotificationCooldownManager
+        mgr = NotificationCooldownManager(default_cooldown=1.0)
+        assert mgr.should_notify("cpu", pid=100) is True
+        mgr.record_notification("cpu", pid=100)
+        # Immediate same pid check should be throttled
+        assert mgr.should_notify("cpu", pid=100) is False
+        # Different PID causes immediate notification
+        assert mgr.should_notify("cpu", pid=200) is True
+        # Different category causes notification
+        assert mgr.should_notify("memory", pid=100) is True
+        # Reset allows notification again
+        mgr.reset()
+        assert mgr.should_notify("cpu", pid=100) is True
+
+    def test_desktop_notification_dispatch(self):
+        from src.monitor.notifier import send_desktop_notification
+        # Test dispatch doesn't raise exception
+        send_desktop_notification(
+            title="Test Alert",
+            message="Test Message",
+            subtitle="Test Subtitle",
+            sound=False
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

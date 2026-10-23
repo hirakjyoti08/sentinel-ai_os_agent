@@ -119,12 +119,15 @@ def render_message_to_log(write_fn, content: str, indent: str = "  "):
             for t_line in table_buffer:
                 write_fn(f"{indent}{format_chat_markup(t_line)}")
 
+import os
+import threading
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, Container
 from textual.widgets import Header, Footer, Static, Input, RichLog, Label, Button
 from textual.reactive import reactive
 
 from src.monitor.watcher import SystemWatcher, SystemMetrics
+from src.monitor.notifier import send_desktop_notification, NotificationCooldownManager
 from src.storage.audit_log import get_recent_actions, init_db
 from src.agent.core import Agent
 from src.tools.registry import get_tool_tiers
@@ -843,6 +846,8 @@ class AIOSAgentApp(App):
         super().__init__()
         self.agent = Agent()
         self.watcher = SystemWatcher(interval=2.0, on_anomaly=self.on_anomaly_detected)
+        cooldown_sec = float(os.getenv("ALERT_COOLDOWN_SEC", "60.0"))
+        self.notification_manager = NotificationCooldownManager(default_cooldown=cooldown_sec)
         self._chat_panel: Optional[ChatPanel] = None
         self._stats_panel: Optional[SystemStatsPanel] = None
         self._audit_panel: Optional[AuditLogPanel] = None
@@ -941,17 +946,65 @@ class AIOSAgentApp(App):
         if self._audit_panel:
             self._audit_panel.refresh_log()
     
+    def _dispatch_ui_action(self, fn, *args, **kwargs):
+        """Invoke a UI function safely from either the main thread or a background thread."""
+        try:
+            if threading.get_ident() == getattr(self, "_thread_id", None):
+                fn(*args, **kwargs)
+            else:
+                self.call_from_thread(fn, *args, **kwargs)
+        except RuntimeError:
+            try:
+                fn(*args, **kwargs)
+            except Exception:
+                pass
+
     def on_anomaly_detected(self, anomaly: Any, metrics: SystemMetrics):
         """Called when watcher detects an anomaly (from background thread)."""
         if not self._chat_panel:
             return
 
-        msg = f"⚠️ Anomaly detected: {str(anomaly)}"
+        category = getattr(anomaly, "category", "general")
         offending_pid = getattr(anomaly, "offending_pid", None)
         offending_name = getattr(anomaly, "offending_name", None)
         offending_metric = getattr(anomaly, "offending_metric", None)
         suggested_action = getattr(anomaly, "suggested_action", None)
 
+        # Check notification cooldown to prevent spamming alerts
+        if not self.notification_manager.should_notify(category, pid=offending_pid):
+            return
+
+        self.notification_manager.record_notification(category, pid=offending_pid)
+
+        # 1. Trigger Textual in-app floating toast banner
+        toast_title = f"⚠️ Resource Alert: {category.upper()}"
+        toast_body = f"{str(anomaly)}"
+        if offending_name:
+            toast_body += f" • {offending_name} ({offending_metric})"
+        self._dispatch_ui_action(
+            self.notify,
+            toast_body,
+            title=toast_title,
+            severity="warning" if category != "disk" else "error",
+            timeout=8.0,
+        )
+
+        # 2. Trigger native OS desktop notification (macOS notification banner / Linux notify-send)
+        desktop_title = f"🛡️ Sentinel: High {category.upper()} Alert"
+        desktop_subtitle = f"{str(anomaly)}"
+        desktop_msg = (
+            f"Culprit: {offending_name} (PID {offending_pid}) [{offending_metric}]"
+            if offending_name
+            else "Inspect Sentinel dashboard for remediation."
+        )
+        send_desktop_notification(
+            title=desktop_title,
+            message=desktop_msg,
+            subtitle=desktop_subtitle,
+        )
+
+        # 3. Add to chat log with actionable remediation instructions
+        msg = f"⚠️ Anomaly detected: {str(anomaly)}"
         if offending_pid and offending_name:
             remediation = (
                 f"🔥 Primary Consumer: PID {offending_pid} ({offending_name} • {offending_metric})\n"
@@ -963,7 +1016,7 @@ class AIOSAgentApp(App):
         else:
             full_msg = msg
 
-        self.call_from_thread(
+        self._dispatch_ui_action(
             self._chat_panel.add_message,
             "system",
             full_msg

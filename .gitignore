@@ -60,3 +60,6 @@ Thumbs.db
 
 # Project trash directory
 .trash/
+
+# Local documentation & private notes
+SENTINEL_EXPLAINED.md
