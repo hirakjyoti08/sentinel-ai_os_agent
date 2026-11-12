@@ -1,21 +1,26 @@
 # Tests for Tools
 
 import pytest
-from src.tools.read_only import (
-    list_processes, get_disk_usage, get_cpu_usage, get_gpu_usage,
-    get_top_memory_processes, list_open_ports
+
+from sentinel.safety.circuit_breaker import CircuitBreaker
+from sentinel.safety.permissions import confirm_action, requires_confirmation
+from sentinel.tools.destructive import kill_process
+from sentinel.tools.read_only import (
+    get_cpu_usage,
+    get_disk_usage,
+    get_gpu_usage,
+    get_top_memory_processes,
+    list_open_ports,
+    list_processes,
 )
-from src.tools.reversible import pause_process, resume_process, set_priority, clear_cache_dir
-from src.tools.destructive import kill_process, delete_file, stop_service
-from src.tools.registry import get_tool_schemas, execute_tool, get_tool_tiers
-from src.safety.permissions import get_tool_tier, requires_confirmation, confirm_action
-from src.safety.circuit_breaker import CircuitBreaker
+from sentinel.tools.registry import execute_tool, get_tool_schemas, get_tool_tier, get_tool_tiers
+from sentinel.tools.reversible import pause_process
 
 
 class TestReadOnlyTools:
     def test_list_processes(self):
         result = list_processes()
-        assert result.get("success") == True
+        assert result.get("success")
         assert isinstance(result.get("processes"), list)
         if result["processes"]:
             assert "pid" in result["processes"][0]
@@ -29,7 +34,7 @@ class TestReadOnlyTools:
     
     def test_get_disk_usage(self):
         result = get_disk_usage("/")
-        assert result.get("success") == True
+        assert result.get("success")
         assert "total_gb" in result
         assert "used_gb" in result
         assert "free_gb" in result
@@ -38,14 +43,14 @@ class TestReadOnlyTools:
     
     def test_get_cpu_usage(self):
         result = get_cpu_usage()
-        assert result.get("success") == True
+        assert result.get("success")
         assert "cpu_percent" in result
         assert isinstance(result["cpu_percent"], (int, float))
         assert 0 <= result["cpu_percent"] <= 100
 
     def test_get_gpu_usage(self):
         result = get_gpu_usage()
-        assert result.get("success") == True
+        assert result.get("success")
         assert isinstance(result.get("available"), bool)
         if result.get("available"):
             assert isinstance(result.get("gpu_percent"), (int, float))
@@ -54,7 +59,7 @@ class TestReadOnlyTools:
     
     def test_get_top_memory_processes(self):
         result = get_top_memory_processes(5)
-        assert result.get("success") == True
+        assert result.get("success")
         assert isinstance(result.get("processes"), list)
         assert len(result["processes"]) <= 5
         # Verify descending order by memory_mb
@@ -63,7 +68,7 @@ class TestReadOnlyTools:
     
     def test_list_open_ports(self):
         result = list_open_ports()
-        assert result.get("success") == True
+        assert result.get("success")
         assert isinstance(result.get("connections"), list)
 
 
@@ -91,7 +96,7 @@ class TestToolRegistry:
     def test_kill_process_accepts_signal_param(self):
         # PID 99999999 does not exist, but execute_tool must not raise TypeError for "signal"
         result = execute_tool("kill_process", {"pid": 99999999, "signal": 9})
-        assert result.get("success") == False
+        assert not result.get("success")
         assert "not found" in result.get("error", "").lower()
 
 
@@ -102,21 +107,28 @@ class TestPermissions:
         assert get_tool_tier("kill_process") == "destructive"
     
     def test_requires_confirmation(self):
-        assert requires_confirmation("read_only") == False
-        assert requires_confirmation("reversible") == True
-        assert requires_confirmation("destructive") == True
+        assert not requires_confirmation("read_only")
+        assert requires_confirmation("reversible")
+        assert requires_confirmation("destructive")
 
     def test_confirm_action_callback(self):
         approved = confirm_action("destructive", "kill_process", {"pid": 123}, confirm_callback=lambda *_: True)
-        assert approved == True
+        assert approved
         denied = confirm_action("destructive", "kill_process", {"pid": 123}, confirm_callback=lambda *_: False)
-        assert denied == False
+        assert not denied
 
 
 class TestAuditLogAndUndo:
     def test_audit_log_persists_undo_data_and_ignores_readonly(self):
-        from src.storage.audit_log import init_db, log_action, update_result, get_last_action, mark_undone
         import json
+
+        from sentinel.storage.audit_log import (
+            get_last_action,
+            init_db,
+            log_action,
+            mark_undone,
+            update_result,
+        )
         init_db()
 
         # Log a reversible action with undo data
@@ -140,22 +152,22 @@ class TestAuditLogAndUndo:
 class TestCircuitBreaker:
     def test_circuit_breaker(self):
         cb = CircuitBreaker(max_actions=3, window_seconds=60)
-        assert cb.is_triggered() == False
+        assert not cb.is_triggered()
         
         cb.record_action()
         cb.record_action()
         assert cb.get_remaining_actions() == 1
         
         cb.record_action()
-        assert cb.is_triggered() == True
+        assert cb.is_triggered()
         
         cb.reset()
-        assert cb.is_triggered() == False
+        assert not cb.is_triggered()
 
 
 class TestTUIComponents:
     def test_gauge_bar_rendering(self):
-        from src.ui.tui import render_gauge_bar
+        from sentinel.ui.tui import render_gauge_bar
         bar_low = render_gauge_bar(15.0)
         bar_mid = render_gauge_bar(70.0)
         bar_high = render_gauge_bar(95.0)
@@ -168,14 +180,14 @@ class TestTUIComponents:
         assert "bright_red" in bar_high
 
     def test_app_instantiation(self):
-        from src.ui.tui import AIOSAgentApp
+        from sentinel.ui.tui import AIOSAgentApp
         app = AIOSAgentApp()
         assert app is not None
         assert hasattr(app, "watcher")
         assert hasattr(app, "agent")
 
     def test_format_chat_markup(self):
-        from src.ui.tui import format_chat_markup
+        from sentinel.ui.tui import format_chat_markup
         raw = "GPU running at **27.0%** with **VRAM** usage."
         formatted = format_chat_markup(raw)
         assert "**" not in formatted
@@ -184,7 +196,8 @@ class TestTUIComponents:
 
     def test_chat_panel_richlog_wrap(self):
         import asyncio
-        from src.ui.tui import AIOSAgentApp, RichLog
+
+        from sentinel.ui.tui import AIOSAgentApp, RichLog
 
         async def _check():
             app = AIOSAgentApp()
@@ -196,7 +209,7 @@ class TestTUIComponents:
         asyncio.run(_check())
 
     def test_parse_markdown_table(self):
-        from src.ui.tui import parse_markdown_table
+        from sentinel.ui.tui import parse_markdown_table
         lines = [
             "| Rank | PID | Process Name | Memory Used | CPU % | Uptime |",
             "|------|-----|--------------|-------------|-------|--------|",
@@ -210,7 +223,8 @@ class TestTUIComponents:
 
     def test_send_button_label(self):
         import asyncio
-        from src.ui.tui import AIOSAgentApp, Button
+
+        from sentinel.ui.tui import AIOSAgentApp, Button
 
         async def _check():
             app = AIOSAgentApp()
@@ -221,7 +235,7 @@ class TestTUIComponents:
         asyncio.run(_check())
 
     def test_render_ports_section(self):
-        from src.ui.tui import SystemStatsPanel
+        from sentinel.ui.tui import SystemStatsPanel
         panel = SystemStatsPanel()
         sample_ports = [
             {"port": 5000, "protocol": "TCP", "pid": 1234, "process": "flask"},
@@ -236,7 +250,7 @@ class TestTUIComponents:
         assert "No active listening ports" in empty_rendered
 
     def test_render_ascii_bar(self):
-        from src.agent.core import _render_ascii_bar
+        from sentinel.agent.core import _render_ascii_bar
         bar_0 = _render_ascii_bar(0.0)
         assert "░░░░░░░░░░" in bar_0
         bar_50 = _render_ascii_bar(50.0)
@@ -245,8 +259,8 @@ class TestTUIComponents:
         assert "██████████" in bar_100
 
     def test_graphical_fallback_response(self):
-        from src.agent.core import Agent
-        from src.ui.tui import parse_markdown_table
+        from sentinel.agent.core import Agent
+        from sentinel.ui.tui import parse_markdown_table
         agent = Agent()
         reply = agent._try_local_fallback("how is my pc")
         assert "| Resource |" in reply
@@ -258,9 +272,13 @@ class TestTUIComponents:
         assert tbl is not None
 
     def test_close_port_tool_and_schema(self):
-        import socket, subprocess, sys, time
-        from src.tools.destructive import close_port
-        from src.tools.registry import get_tool_schemas, get_tool_tiers
+        import socket
+        import subprocess
+        import sys
+        import time
+
+        from sentinel.tools.destructive import close_port
+        from sentinel.tools.registry import get_tool_schemas, get_tool_tiers
 
         # Verify schema and tier
         tiers = get_tool_tiers()
@@ -295,7 +313,7 @@ class TestTUIComponents:
                 proc.terminate()
 
     def test_close_port_agent_routing(self):
-        from src.agent.core import Agent
+        from sentinel.agent.core import Agent
         agent = Agent()
         # Prompt when no port is specified
         prompt_res = agent._try_local_fallback("close port")
@@ -306,7 +324,8 @@ class TestTUIComponents:
 
     def test_close_port_chip_button(self):
         import asyncio
-        from src.ui.tui import AIOSAgentApp, Button
+
+        from sentinel.ui.tui import AIOSAgentApp, Button
 
         async def _check():
             app = AIOSAgentApp()
@@ -318,7 +337,8 @@ class TestTUIComponents:
 
     def test_ai_engine_bar_aesthetic_and_preserved_on_clear(self):
         import asyncio
-        from src.ui.tui import AIOSAgentApp, Static, RichLog
+
+        from sentinel.ui.tui import AIOSAgentApp, Static
 
         async def _check():
             app = AIOSAgentApp()
@@ -346,8 +366,8 @@ class TestTUIComponents:
         asyncio.run(_check())
 
     def test_get_network_bandwidth_tool(self):
-        from src.tools.read_only import get_network_bandwidth
-        from src.tools.registry import get_tool_schemas, get_tool_tiers
+        from sentinel.tools.read_only import get_network_bandwidth
+        from sentinel.tools.registry import get_tool_schemas, get_tool_tiers
 
         # Test tool schema and tier registration
         tiers = get_tool_tiers()
@@ -366,7 +386,7 @@ class TestTUIComponents:
         assert "upload_bytes_sec" in res
 
     def test_sparkline_renderer(self):
-        from src.ui.tui import render_sparkline, SPARKLINE_BARS
+        from sentinel.ui.tui import SPARKLINE_BARS, render_sparkline
 
         # Empty data fallback
         empty_res = render_sparkline([])
@@ -378,7 +398,7 @@ class TestTUIComponents:
         assert SPARKLINE_BARS[-1] in spark
 
     def test_system_watcher_network_and_history(self):
-        from src.monitor.watcher import SystemWatcher
+        from sentinel.monitor.watcher import SystemWatcher
         watcher = SystemWatcher(interval=1.0)
         metrics = watcher._collect_metrics()
         assert hasattr(metrics, "net_download_speed")
@@ -391,7 +411,7 @@ class TestTUIComponents:
         assert len(metrics.net_history) >= 1
 
     def test_network_bandwidth_agent_fallback(self):
-        from src.agent.core import Agent
+        from sentinel.agent.core import Agent
         agent = Agent()
         reply = agent._try_local_fallback("check network bandwidth")
         assert "| Direction | Current Speed | Total Transferred |" in reply
@@ -399,8 +419,7 @@ class TestTUIComponents:
         assert "Upload (TX)" in reply
 
     def test_interactive_proc_and_port_rows(self):
-        import asyncio
-        from src.ui.tui import AIOSAgentApp, Button, Static, ProcRow, PortRow
+        from sentinel.ui.tui import AIOSAgentApp, Button, PortRow, ProcRow, Static
 
         async def _check():
             app = AIOSAgentApp()
@@ -429,21 +448,21 @@ class TestTUIComponents:
                 assert hasattr(app, "_pending_kill") or app._chat_panel is not None
 
     def test_chat_fast_path_kill_command(self):
-        from src.agent.core import Agent
+        from sentinel.agent.core import Agent
         agent = Agent()
         # Test kill by name / PID executes fast-path directly
         res = agent.chat("kill non_existent_dummy_process_xyz_99999")
         assert "No running process found" in res
 
     def test_chat_fast_path_port_command(self):
-        from src.agent.core import Agent
+        from sentinel.agent.core import Agent
         agent = Agent()
         # Test close port executes fast-path directly
         res = agent.chat("close port 59999")
         assert "59999" in res
 
     def test_trim_tool_result_for_llm(self):
-        from src.agent.core import Agent
+        from sentinel.agent.core import Agent
         agent = Agent()
         fake_procs = [{"pid": i, "name": f"proc_{i}", "cpu_percent": 1.0, "memory_mb": 10.0} for i in range(100)]
         trimmed = agent._trim_tool_result_for_llm("list_processes", {"success": True, "processes": fake_procs})
@@ -453,18 +472,19 @@ class TestTUIComponents:
 
     def test_app_action_quit(self):
         import asyncio
-        from src.ui.tui import AIOSAgentApp
+
+        from sentinel.ui.tui import AIOSAgentApp
 
         async def _check():
             app = AIOSAgentApp()
-            async with app.run_test() as pilot:
+            async with app.run_test():
                 app.action_quit()
                 assert app.is_running is False or app._exit is True
 
         asyncio.run(_check())
 
     def test_protected_process_whitelist(self):
-        from src.safety.permissions import is_protected_process
+        from sentinel.safety.permissions import is_protected_process
         # PID 1 init is protected
         is_p, _ = is_protected_process(1)
         assert is_p is True
@@ -482,8 +502,6 @@ class TestTUIComponents:
         assert is_p is False
 
     def test_kill_and_pause_blocked_for_protected(self):
-        from src.tools.destructive import kill_process
-        from src.tools.reversible import pause_process
 
         kill_res = kill_process(1)
         assert kill_res["success"] is False
@@ -494,7 +512,7 @@ class TestTUIComponents:
         assert "Operation denied" in pause_res["error"]
 
     def test_get_battery_and_thermal_tool(self):
-        from src.tools.read_only import get_battery_and_thermal
+        from sentinel.tools.read_only import get_battery_and_thermal
         res = get_battery_and_thermal()
         assert res["success"] is True
         assert "has_battery" in res
@@ -503,7 +521,7 @@ class TestTUIComponents:
         assert "thermal_throttling" in res
 
     def test_anomaly_event_with_target_metadata(self):
-        from src.monitor.watcher import SystemWatcher, SystemMetrics, AnomalyEvent
+        from sentinel.monitor.watcher import AnomalyEvent, SystemMetrics, SystemWatcher
         captured = []
         watcher = SystemWatcher(
             interval=1.0,
@@ -526,7 +544,7 @@ class TestTUIComponents:
         assert event.suggested_action == "kill"
 
     def test_analyze_disk_hogs_tool(self, tmp_path):
-        from src.tools.read_only import analyze_disk_hogs
+        from sentinel.tools.read_only import analyze_disk_hogs
         fake_cache = tmp_path / "mock_cache"
         fake_cache.mkdir()
         fake_file = fake_cache / "large_blob.bin"
@@ -541,7 +559,7 @@ class TestTUIComponents:
         assert any(t["name"] == "Mock Cache" for t in res["targets"])
 
     def test_clean_developer_caches_tool(self, tmp_path):
-        from src.tools.reversible import clean_developer_caches
+        from sentinel.tools.reversible import clean_developer_caches
         fake_cache = tmp_path / "clean_me"
         fake_cache.mkdir()
         (fake_cache / "test1.tmp").write_text("hello world")
@@ -556,7 +574,7 @@ class TestTUIComponents:
         assert len(list(fake_cache.iterdir())) == 0
 
     def test_agent_disk_hogs_routing(self):
-        from src.agent.core import Agent
+        from sentinel.agent.core import Agent
         agent = Agent()
         res = agent._try_local_fallback("analyze disk hogs and free space")
         assert res is not None
@@ -564,7 +582,7 @@ class TestTUIComponents:
         assert "Total Reclaimable" in res
 
     def test_agent_chat_token_streaming(self):
-        from src.agent.core import Agent
+        from sentinel.agent.core import Agent
         agent = Agent()
         tokens = []
         def _collector(tok):
@@ -575,7 +593,7 @@ class TestTUIComponents:
         assert "".join(tokens).strip() == res.strip()
 
     def test_tui_chat_panel_streaming_lifecycle(self):
-        from src.ui.tui import ChatPanel
+        from sentinel.ui.tui import ChatPanel
         panel = ChatPanel()
         panel._is_streaming = False
         panel._stream_buffer = ""
@@ -589,7 +607,7 @@ class TestTUIComponents:
         assert panel._stream_buffer == ""
 
     def test_get_system_info_hardware_enrichment(self):
-        from src.tools.read_only import get_system_info
+        from sentinel.tools.read_only import get_system_info
         info = get_system_info()
         assert info["success"] is True
         assert "model_name" in info
@@ -601,14 +619,14 @@ class TestTUIComponents:
             assert info["model_name"] != ""
 
     def test_system_prompt_enriched_with_hardware(self):
-        from src.agent.prompts import get_system_prompt
+        from sentinel.agent.prompts import get_system_prompt
         prompt = get_system_prompt()
         assert "HOST SYSTEM ENVIRONMENT" in prompt
         assert "RULES FOR HARDWARE & SOFTWARE COMPATIBILITY" in prompt
 
 
     def test_notification_cooldown_manager(self):
-        from src.monitor.notifier import NotificationCooldownManager
+        from sentinel.monitor.notifier import NotificationCooldownManager
         mgr = NotificationCooldownManager(default_cooldown=1.0)
         assert mgr.should_notify("cpu", pid=100) is True
         mgr.record_notification("cpu", pid=100)
@@ -623,7 +641,7 @@ class TestTUIComponents:
         assert mgr.should_notify("cpu", pid=100) is True
 
     def test_desktop_notification_dispatch(self):
-        from src.monitor.notifier import send_desktop_notification
+        from sentinel.monitor.notifier import send_desktop_notification
         # Test dispatch doesn't raise exception
         send_desktop_notification(
             title="Test Alert",

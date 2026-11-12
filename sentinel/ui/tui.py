@@ -1,11 +1,22 @@
-import re
-import json
 import asyncio
+import json
+import os
+import re
+import threading
 from datetime import datetime
-from typing import Optional
+from typing import Any
 
-from rich.table import Table
 from rich import box
+from rich.table import Table
+from textual.app import App, ComposeResult
+from textual.containers import Container, Horizontal, Vertical
+from textual.reactive import reactive
+from textual.widgets import Button, Footer, Header, Input, RichLog, Static
+
+from sentinel.agent.core import Agent
+from sentinel.monitor.notifier import NotificationCooldownManager, send_desktop_notification
+from sentinel.monitor.watcher import SystemMetrics, SystemWatcher
+from sentinel.storage.audit_log import get_recent_actions, init_db
 
 
 def format_chat_markup(content: str) -> str:
@@ -119,18 +130,6 @@ def render_message_to_log(write_fn, content: str, indent: str = "  "):
             for t_line in table_buffer:
                 write_fn(f"{indent}{format_chat_markup(t_line)}")
 
-import os
-import threading
-from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, Container
-from textual.widgets import Header, Footer, Static, Input, RichLog, Label, Button
-from textual.reactive import reactive
-
-from src.monitor.watcher import SystemWatcher, SystemMetrics
-from src.monitor.notifier import send_desktop_notification, NotificationCooldownManager
-from src.storage.audit_log import get_recent_actions, init_db
-from src.agent.core import Agent
-from src.tools.registry import get_tool_tiers
 
 
 def render_gauge_bar(percent: float, width: int = 14) -> str:
@@ -152,7 +151,7 @@ def render_gauge_bar(percent: float, width: int = 14) -> str:
 SPARKLINE_BARS = [" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
 
 
-def render_sparkline(values: list[float], min_val: float = 0.0, max_val: Optional[float] = 100.0, color: str = "#58a6ff") -> str:
+def render_sparkline(values: list[float], min_val: float = 0.0, max_val: float | None = 100.0, color: str = "#58a6ff") -> str:
     """Render a clean unicode sparkline from history values."""
     if not values:
         return "[dim]──────────────[/dim]"
@@ -339,7 +338,7 @@ class SystemStatsPanel(Container):
         cores_str = f"{m.cpu_cores} Cores" if m.cpu_cores else "Multi-Core"
         uptime_str = f"Uptime: {m.uptime_hours:.1f}h" if m.uptime_hours is not None else ""
         try:
-            from src.tools.read_only import get_system_info
+            from sentinel.tools.read_only import get_system_info
             sys_info = get_system_info()
             model_chip = f"{sys_info.get('model_name', 'Mac')} ({sys_info.get('chip', 'Apple Silicon')})"
         except Exception:
@@ -403,7 +402,7 @@ class SystemStatsPanel(Container):
 
             current_rows = [w for w in procs_list.children if isinstance(w, ProcRow)]
             if [r.pid for r in current_rows] == [p['pid'] for p in top_procs]:
-                for r, p in zip(current_rows, top_procs):
+                for r, p in zip(current_rows, top_procs, strict=True):
                     r.update_data(p['name'], p.get('cpu_percent', 0.0), p.get('memory_percent', 0.0))
             else:
                 await procs_list.remove_children()
@@ -415,7 +414,7 @@ class SystemStatsPanel(Container):
         except Exception:
             pass
 
-    async def _update_port_rows(self, ports: Optional[list]):
+    async def _update_port_rows(self, ports: list | None):
         try:
             ports_list = self.query_one("#ports_list", Vertical)
             top_ports = (ports or [])[:4]
@@ -426,7 +425,7 @@ class SystemStatsPanel(Container):
 
             current_rows = [w for w in ports_list.children if isinstance(w, PortRow)]
             if [(r.port, r.pid) for r in current_rows] == [(p['port'], p['pid']) for p in top_ports]:
-                for r, p in zip(current_rows, top_ports):
+                for r, p in zip(current_rows, top_ports, strict=True):
                     r.update_data(p.get('protocol', 'TCP'), p['pid'], p['process'])
             else:
                 await ports_list.remove_children()
@@ -465,7 +464,7 @@ class SystemStatsPanel(Container):
             )
         return "\n".join(lines)
 
-    def _render_ports(self, ports: Optional[list]) -> str:
+    def _render_ports(self, ports: list | None) -> str:
         if not ports:
             return "  [dim #8b949e]● No active listening ports detected[/dim #8b949e]"
         lines = ["[dim #8b949e]  PORT    PROTO  PID     PROCESS[/dim #8b949e]"]
@@ -848,9 +847,9 @@ class AIOSAgentApp(App):
         self.watcher = SystemWatcher(interval=2.0, on_anomaly=self.on_anomaly_detected)
         cooldown_sec = float(os.getenv("ALERT_COOLDOWN_SEC", "60.0"))
         self.notification_manager = NotificationCooldownManager(default_cooldown=cooldown_sec)
-        self._chat_panel: Optional[ChatPanel] = None
-        self._stats_panel: Optional[SystemStatsPanel] = None
-        self._audit_panel: Optional[AuditLogPanel] = None
+        self._chat_panel: ChatPanel | None = None
+        self._stats_panel: SystemStatsPanel | None = None
+        self._audit_panel: AuditLogPanel | None = None
         self._agent_busy: bool = False
         self._anim_frame: int = 0
     
@@ -920,7 +919,7 @@ class AIOSAgentApp(App):
             ("gemini", "Gemini", "CLOUD"),
         ]
         badges = []
-        for key, display_name, engine_type in order:
+        for key, display_name, _engine_type in order:
             state = provider_status.get(key, {})
             configured = bool(state.get("configured", False))
             available = bool(state.get("available", False))
@@ -1093,7 +1092,7 @@ class AIOSAgentApp(App):
                 await self._handle_kill_confirmation(confirm_data)
             else:
                 self._chat_panel.add_message("agent", response)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._chat_panel.finish_streaming()
             self._chat_panel.add_message(
                 "system",

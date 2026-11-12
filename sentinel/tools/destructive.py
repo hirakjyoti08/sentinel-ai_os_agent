@@ -1,17 +1,20 @@
 # Destructive System Tools (require explicit confirmation)
 
-import psutil
 import os
+import platform
 import shutil
 import signal as signal_module
 import subprocess
-import platform
 import time
-from typing import Dict, Any
-from src.safety.permissions import is_protected_process
+from typing import Any
+
+import psutil
+
+from sentinel.paths import trash_dir as get_trash_dir
+from sentinel.safety.permissions import is_protected_process
 
 
-def kill_process(pid: int, signal: int = signal_module.SIGKILL, **kwargs) -> Dict[str, Any]:
+def kill_process(pid: int, signal: int = signal_module.SIGKILL, **kwargs) -> dict[str, Any]:
     """Kill a process (SIGKILL by default). DESTRUCTIVE - cannot be undone."""
     is_prot, prot_reason = is_protected_process(pid)
     if is_prot:
@@ -49,14 +52,14 @@ def kill_process(pid: int, signal: int = signal_module.SIGKILL, **kwargs) -> Dic
         return {"success": False, "error": f"Permission denied for process {pid}"}
 
 
-def delete_file(path: str) -> Dict[str, Any]:
+def delete_file(path: str) -> dict[str, Any]:
     """Delete a file or directory. DESTRUCTIVE - moves to .trash before removal for undo."""
     if not os.path.exists(path):
         return {"success": False, "error": f"Path {path} does not exist"}
     
     abs_path = os.path.abspath(path)
     was_dir = os.path.isdir(abs_path)
-    trash_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".trash"))
+    trash_dir = str(get_trash_dir())
     backup_path = None
 
     try:
@@ -79,7 +82,7 @@ def delete_file(path: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e), "undo_data": undo_data}
 
 
-def stop_service(name: str) -> Dict[str, Any]:
+def stop_service(name: str) -> dict[str, Any]:
     """Stop a system service. DESTRUCTIVE - may affect system stability."""
     system = platform.system()
     undo_data = {"service": name, "system": system}
@@ -100,7 +103,7 @@ def stop_service(name: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e), "undo_data": undo_data}
 
 
-def close_port(port: int, signal: int = signal_module.SIGTERM, **kwargs) -> Dict[str, Any]:
+def close_port(port: int, signal: int = signal_module.SIGTERM, **kwargs) -> dict[str, Any]:
     """Close an open network port by terminating the listening process(es). DESTRUCTIVE."""
     signal_num = kwargs.get("signal_num", signal)
     pids = []

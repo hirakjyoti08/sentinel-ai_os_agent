@@ -3,12 +3,13 @@
 import os
 import threading
 import time
-import psutil
 from collections import deque
-from typing import Callable, Optional, List
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from src.tools.read_only import get_gpu_usage, list_open_ports, format_speed, format_bytes
+import psutil
+
+from sentinel.tools.read_only import format_bytes, format_speed, get_gpu_usage, list_open_ports
 
 
 @dataclass
@@ -19,16 +20,16 @@ class SystemMetrics:
     disk_percent: float
     top_processes: list
     timestamp: float
-    gpu_percent: Optional[float] = None
-    gpu_device: Optional[str] = None
-    gpu_memory_used_mb: Optional[float] = None
-    memory_used_gb: Optional[float] = None
-    memory_total_gb: Optional[float] = None
-    disk_free_gb: Optional[float] = None
-    disk_total_gb: Optional[float] = None
-    uptime_hours: Optional[float] = None
-    cpu_cores: Optional[int] = None
-    open_ports: Optional[list] = None
+    gpu_percent: float | None = None
+    gpu_device: str | None = None
+    gpu_memory_used_mb: float | None = None
+    memory_used_gb: float | None = None
+    memory_total_gb: float | None = None
+    disk_free_gb: float | None = None
+    disk_total_gb: float | None = None
+    uptime_hours: float | None = None
+    cpu_cores: int | None = None
+    open_ports: list | None = None
     net_download_speed: str = "0.0 B/s"
     net_upload_speed: str = "0.0 B/s"
     net_download_bytes_sec: float = 0.0
@@ -45,10 +46,10 @@ class AnomalyEvent:
     """Structured representation of a detected system anomaly with actionable remediation."""
     category: str  # "cpu", "memory", "disk", "gpu"
     message: str
-    offending_pid: Optional[int] = None
-    offending_name: Optional[str] = None
-    offending_metric: Optional[str] = None
-    suggested_action: Optional[str] = None  # "kill", "throttle", "clean"
+    offending_pid: int | None = None
+    offending_name: str | None = None
+    offending_metric: str | None = None
+    suggested_action: str | None = None  # "kill", "throttle", "clean"
 
     def __str__(self) -> str:
         return self.message
@@ -59,20 +60,20 @@ class SystemWatcher:
     
     def __init__(self, 
                  interval: float = 2.0,
-                 cpu_threshold: Optional[float] = None,
-                 memory_threshold: Optional[float] = None,
-                 disk_threshold: Optional[float] = None,
-                 gpu_threshold: Optional[float] = None,
-                 on_anomaly: Optional[Callable[[AnomalyEvent, SystemMetrics], None]] = None):
+                 cpu_threshold: float | None = None,
+                 memory_threshold: float | None = None,
+                 disk_threshold: float | None = None,
+                 gpu_threshold: float | None = None,
+                 on_anomaly: Callable[[AnomalyEvent, SystemMetrics], None] | None = None):
         self.interval = interval
         self.cpu_threshold = cpu_threshold if cpu_threshold is not None else float(os.getenv("ALERT_CPU_THRESHOLD", "85.0"))
         self.memory_threshold = memory_threshold if memory_threshold is not None else float(os.getenv("ALERT_MEMORY_THRESHOLD", "90.0"))
         self.disk_threshold = disk_threshold if disk_threshold is not None else float(os.getenv("ALERT_DISK_THRESHOLD", "90.0"))
         self.gpu_threshold = gpu_threshold if gpu_threshold is not None else float(os.getenv("ALERT_GPU_THRESHOLD", "90.0"))
         self.on_anomaly = on_anomaly
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._running = False
-        self._last_metrics: Optional[SystemMetrics] = None
+        self._last_metrics: SystemMetrics | None = None
 
         # Rolling history deques for sparklines (up to 20 samples)
         self.cpu_history: deque = deque(maxlen=20)
@@ -80,9 +81,9 @@ class SystemWatcher:
         self.net_history: deque = deque(maxlen=20)
 
         # Network I/O delta tracking
-        self._last_net_bytes_recv: Optional[int] = None
-        self._last_net_bytes_sent: Optional[int] = None
-        self._last_net_time: Optional[float] = None
+        self._last_net_bytes_recv: int | None = None
+        self._last_net_bytes_sent: int | None = None
+        self._last_net_time: float | None = None
 
     
     def start(self):
@@ -266,6 +267,6 @@ class SystemWatcher:
             if self.on_anomaly:
                 self.on_anomaly(anomaly, metrics)
     
-    def get_current_metrics(self) -> Optional[SystemMetrics]:
+    def get_current_metrics(self) -> SystemMetrics | None:
         """Get the most recent metrics snapshot."""
         return self._last_metrics

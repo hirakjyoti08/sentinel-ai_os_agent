@@ -1,8 +1,8 @@
 # AI-Powered OS Management Agent - Implementation Tracker
 
 ## Project Configuration
-- **Primary LLM**: LM Studio (Qwen 3.5-9B) - local, unlimited, no rate limits
-- **Fallback LLMs**: Groq (llama-3.3-70b-versatile) → Gemini (gemini-2.0-flash)
+- **Primary LLM**: NVIDIA Nemotron (`nvidia/nemotron-3-ultra-550b-a55b`) via NIM - replaced LM Studio (see Decision Log)
+- **Fallback LLMs**: Groq (`qwen/qwen3.8-27b`) → Gemini (`gemini-3.6-flash`, `google-genai` SDK)
 - **Interface**: Textual TUI (full dashboard: chat + live stats + audit log)
 - **Timeline**: 1 week MVP (Steps 1-6)
 - **RAG/Memory**: Stretch goal (Step 11)
@@ -21,7 +21,7 @@
 - [x] Create `.env` with actual keys (gitignored)
 - [x] Create folder structure per spec
 - [x] Create stub files for all modules
-- [x] Write `src/main.py` entry point that starts TUI
+- [x] Write `sentinel/main.py` entry point that starts TUI
 - [x] Test Groq API call works
 - [ ] Test Gemini API call works (quota exhausted)
 
@@ -33,13 +33,13 @@
 ---
 
 #### Step 2: Tool Registry (Read-Only Tier)
-- [x] Implement `src/tools/read_only.py`:
+- [x] Implement `sentinel/tools/read_only.py`:
   - [x] `list_processes()` → `[{pid, name, memory_mb, cpu_percent, uptime_sec}]`
   - [x] `get_disk_usage(path: str)` → `{total_gb, used_gb, free_gb, percent}`
   - [x] `get_cpu_usage()` → `float` (system-wide)
   - [x] `get_top_memory_processes(n: int)` → list sorted by memory
   - [x] `list_open_ports()` → `[{pid, process, port, protocol}]`
-- [x] Implement `src/tools/registry.py`:
+- [x] Implement `sentinel/tools/registry.py`:
   - [x] Tool schema class with: name, description, params (JSONSchema), tier
   - [x] `get_tool_schemas()` returning list compatible with Gemini function calling
   - [x] `execute_tool(name, params)` dispatcher
@@ -55,10 +55,10 @@
 ### Phase 2: Core Agent Loop (Day 2) - Step 3
 
 #### Step 3: Basic Agent Loop (Single-Shot Function Calling)
-- [x] Implement `src/agent/prompts.py`:
+- [x] Implement `sentinel/agent/prompts.py`:
   - [x] System prompt defining agent role, available tools, response format
   - [x] Tool result summarization prompt
-- [x] Implement `src/agent/core.py`:
+- [x] Implement `sentinel/agent/core.py`:
   - [x] `Agent` class with `chat(user_input: str) -> str`
   - [x] Loop: user input → Gemini with tools → tool call → execute → result to Gemini → final answer
   - [x] Groq fallback on Gemini failure (rate limit, timeout)
@@ -75,17 +75,17 @@
 ### Phase 3: Safety & Permissions (Day 3) - Steps 4-5
 
 #### Step 4: Tiered Permissions + Reversible/Destructive Tools
-- [x] Implement `src/tools/reversible.py`:
+- [x] Implement `sentinel/tools/reversible.py`:
   - [x] `pause_process(pid: int)` → `SIGSTOP`
   - [x] `resume_process(pid: int)` → `SIGCONT`
   - [x] `set_priority(pid: int, nice: int)` → `psutil.Process.nice()`
   - [x] `clear_cache_dir(path: str)` → delete `*.cache`, `__pycache__`, etc.
-- [x] Implement `src/tools/destructive.py`:
+- [x] Implement `sentinel/tools/destructive.py`:
   - [x] `kill_process(pid: int, signal: int = 9)` → `SIGKILL`
   - [x] `delete_file(path: str)` → `os.remove` / `shutil.rmtree`
   - [x] `stop_service(name: str)` → `systemctl stop` (Linux) / `launchctl` (macOS)
 - [x] Update `registry.py` with all new tools, tiers: `reversible`, `destructive`
-- [x] Implement `src/safety/permissions.py`:
+- [x] Implement `sentinel/safety/permissions.py`:
   - [x] `require_confirmation(tier, action_description) -> bool`
   - [x] Read-only: auto-approve
   - [x] Reversible: prompt "About to pause PID 1234. Continue? [y/N]"
@@ -100,8 +100,8 @@
 ---
 
 #### Step 5: Audit Log + Undo
-- [x] Create `src/storage/db_schema.sql`
-- [x] Implement `src/storage/audit_log.py`:
+- [x] Create `sentinel/storage/db_schema.sql`
+- [x] Implement `sentinel/storage/audit_log.py`:
   - [x] `log_action(action, params, tier, undo_data)` → returns `log_id`
   - [x] `update_result(log_id, result)`
   - [x] `get_last_action()` → last executed entry
@@ -124,7 +124,7 @@
 ### Phase 4: Multi-Step Reasoning (Day 4) - Step 6
 
 #### Step 6: Plan → Act → Observe → Reflect Loop
-- [x] Redesign `src/agent/core.py` for multi-step:
+- [x] Redesign `sentinel/agent/core.py` for multi-step:
   - [x] New `Agent.run_goal(goal: str, max_steps: int = 10)` method
   - [x] **Plan**: Send goal + tool schemas → get structured plan JSON
   - [x] **Act**: Execute step 1
@@ -145,7 +145,7 @@
 ### Phase 5: TUI & Polish (Day 5) - Step 9
 
 #### Step 9: Textual TUI (Core Panels)
-- [x] Implement `src/ui/tui.py` using Textual:
+- [x] Implement `sentinel/ui/tui.py` using Textual:
   - [x] **Left panel** (60%): Chat history + input box
   - [x] **Right-top** (20%): Live system stats (CPU%, Mem%, Disk%, top 5 processes)
   - [x] **Right-bottom** (20%): Audit log tail (last 10 entries, color by tier)
@@ -167,21 +167,21 @@
 ### Phase 6: Testing & Hardening (Day 6-7)
 
 #### Step 7: Circuit Breaker
-- [x] Implement `src/safety/circuit_breaker.py`:
+- [x] Implement `sentinel/safety/circuit_breaker.py`:
   - [x] Track destructive actions per session (sliding 5-min window)
   - [x] Threshold: 5 destructive actions → force re-confirmation for each subsequent
   - [x] Reset on session restart
 
 #### Local Fallback for Kill Commands (Added)
-- [x] Add `_handle_kill_highest()` in `src/agent/core.py` for CPU/memory
+- [x] Add `_handle_kill_highest()` in `sentinel/agent/core.py` for CPU/memory
 - [x] Return structured `__CONFIRM_KILL__` response for TUI
 - [x] TUI handles confirmation inline with "Type 'yes'" prompt
 - [x] Uses existing `_execute_tool_with_permissions()` for audit/circuit breaker
 
 #### LM Studio Local LLM Integration (Added)
 - [x] Add `LMSTUDIO_BASE_URL` and `LMSTUDIO_MODEL` to `.env`
-- [x] Create `src/llm/lmstudio_client.py` - OpenAI-compatible wrapper
-- [x] Update `src/agent/core.py` - Priority: LM Studio → Groq → Gemini
+- [x] Create `sentinel/llm/lmstudio_client.py` - OpenAI-compatible wrapper
+- [x] Update `sentinel/agent/core.py` - Priority: LM Studio → Groq → Gemini
 - [x] Update `pyproject.toml` - Add `openai>=1.30.0` dependency
 - [x] Test with Qwen 3.5-9B - function calling works
 
@@ -223,6 +223,9 @@
 | 2025-08-06 | Tier-based permissions (read_only/reversible/destructive) | Safety first, explicit confirmations | src/safety/permissions.py, src/tools/registry.py |
 | 2025-08-06 | Circuit breaker for destructive actions | Prevent runaway agent | src/safety/circuit_breaker.py |
 | 2025-08-09 | LM Studio (Qwen 3.5-9B) as primary LLM | Unlimited local inference, no rate limits, function calling works | src/llm/lmstudio_client.py, src/agent/core.py, pyproject.toml, .env |
+| 2026-10-23 | NVIDIA Nemotron replaces LM Studio as primary LLM | Frontier-model quality without local GPU requirements; Groq → Gemini kept as fallbacks | src/llm/nemotron_client.py, src/agent/core.py |
+| 2026-11-12 | Package renamed `src` → `sentinel`; `sentinel` console script; CI on macOS + Linux | Installable CLI (`pipx install .`), conventional layout, automated lint + tests | sentinel/, pyproject.toml, .github/workflows/ci.yml |
+| 2026-11-12 | Gemini migrated from deprecated `google-generativeai` to `google-genai`; unused `lmstudio_client.py` removed; tool tiers owned by `tools/registry.py` | Supported SDK; remove dead code; break `permissions` ↔ `registry` import cycle | sentinel/agent/core.py, sentinel/tools/registry.py, sentinel/safety/permissions.py |
 
 ---
 

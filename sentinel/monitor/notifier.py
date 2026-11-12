@@ -1,12 +1,11 @@
 # System Notification Dispatcher - Native OS Alerts & Toast Notifications
 
+import logging
 import os
 import platform
 import subprocess
 import threading
 import time
-import logging
-from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,7 @@ def send_desktop_notification(
     title: str, 
     message: str, 
     subtitle: str = "", 
-    sound: Optional[bool] = None
+    sound: bool | None = None
 ) -> None:
     """
     Dispatch a native desktop notification asynchronously without blocking the caller.
@@ -94,10 +93,10 @@ class NotificationCooldownManager:
     def __init__(self, default_cooldown: float = 60.0):
         self.cooldown = default_cooldown
         # Map: category -> (last_timestamp, last_pid)
-        self._history: Dict[str, tuple[float, Optional[int]]] = {}
+        self._history: dict[str, tuple[float, int | None]] = {}
         self._lock = threading.Lock()
 
-    def should_notify(self, category: str, pid: Optional[int] = None) -> bool:
+    def should_notify(self, category: str, pid: int | None = None) -> bool:
         """
         Determine if an alert for a given category should be dispatched.
         Returns True if cooldown expired OR if the offending process PID changed.
@@ -115,7 +114,7 @@ class NotificationCooldownManager:
 
             return (now - last_time) >= self.cooldown
 
-    def record_notification(self, category: str, pid: Optional[int] = None) -> None:
+    def record_notification(self, category: str, pid: int | None = None) -> None:
         """Record the timestamp and offending PID of a dispatched alert."""
         with self._lock:
             self._history[category] = (time.time(), pid)

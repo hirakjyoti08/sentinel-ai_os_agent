@@ -63,3 +63,6 @@ Thumbs.db
 
 # Local documentation & private notes
 SENTINEL_EXPLAINED.md
+
+# Generated knowledge graph (graphify)
+graphify-out/

@@ -5,19 +5,32 @@ import logging
 import os
 import time
 import types
-from typing import List, Dict, Any, Optional, Callable
+from collections.abc import Callable
+from typing import Any
 
-import google.generativeai as genai
-from groq import Groq
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types as genai_types
+from groq import Groq
 
-from src.tools.registry import get_tool_schemas, get_gemini_tool_schemas, execute_tool, get_tool_tiers
-from src.safety.permissions import get_tool_tier, confirm_action, is_protected_process
-from src.safety.circuit_breaker import CircuitBreaker
-from src.storage.audit_log import log_action, update_result, get_last_action, mark_undone
-from src.agent.prompts import SYSTEM_PROMPT, PLANNING_PROMPT, REFLECTION_PROMPT, TOOL_RESULT_SUMMARY_PROMPT, get_system_prompt
-from src.agent.memory import AgentMemory
-from src.llm.nemotron_client import NemotronClient
+from sentinel.agent.memory import AgentMemory
+from sentinel.agent.prompts import (
+    PLANNING_PROMPT,
+    REFLECTION_PROMPT,
+    SYSTEM_PROMPT,
+    get_system_prompt,
+)
+from sentinel.llm.nemotron_client import NemotronClient
+from sentinel.safety.circuit_breaker import CircuitBreaker
+from sentinel.safety.permissions import confirm_action, is_protected_process
+from sentinel.storage.audit_log import get_last_action, log_action, mark_undone, update_result
+from sentinel.tools.registry import (
+    execute_tool,
+    get_gemini_tool_schemas,
+    get_tool_schemas,
+    get_tool_tier,
+    get_tool_tiers,
+)
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -82,15 +95,15 @@ class Agent:
         # Gemini (fallback)
         gemini_key = os.getenv("GEMINI_API_KEY")
         if gemini_key and gemini_key != "PASTE_YOUR_GEMINI_KEY_HERE":
-            genai.configure(api_key=gemini_key)
-            gemini_model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
-            self.gemini_model = genai.GenerativeModel(gemini_model_name)
+            self.gemini_client = genai.Client(api_key=gemini_key)
+            self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
             self.llm_provider_status["gemini"] = {
                 "configured": True,
                 "available": True,
                 "hint": "Check key validity and Gemini quota/rate limits.",
             }
         else:
+            self.gemini_client = None
             self.gemini_model = None
             self.llm_provider_status["gemini"] = {
                 "configured": False,
@@ -98,23 +111,20 @@ class Agent:
                 "hint": "Set GEMINI_API_KEY in .env",
             }
     
-    def _call_llm(self, messages: List[Dict], tools: List[Dict] = None, on_token: Optional[Callable[[str], None]] = None) -> Any:
+    def _call_llm(self, messages: list[dict], tools: list[dict] = None, on_token: Callable[[str], None] | None = None) -> Any:
         """Call LLM with fallback: Nemotron -> Groq -> Gemini."""
         if tools is None:
             openai_tools = self.tool_schemas_openai
-            gemini_tools = [{"function_declarations": self.tool_schemas_gemini}]
+            gemini_tools = [genai_types.Tool(function_declarations=self.tool_schemas_gemini)]
             tool_choice = "auto"
-            gemini_config = {"function_calling_config": "AUTO"}
         elif tools:
             openai_tools = tools
-            gemini_tools = [{"function_declarations": tools}]
+            gemini_tools = [genai_types.Tool(function_declarations=tools)]
             tool_choice = "auto"
-            gemini_config = {"function_calling_config": "AUTO"}
         else:  # tools == [] (explicitly disabled)
             openai_tools = None
             gemini_tools = None
             tool_choice = "none"
-            gemini_config = {"function_calling_config": "NONE"}
 
         provider_errors = []
         
@@ -305,19 +315,26 @@ class Agent:
             provider_errors.append("Groq not configured")
         
         # Fallback to Gemini - uses Gemini format tools
-        if self.gemini_model:
+        if self.gemini_client:
             try:
-                kwargs = {}
-                if gemini_tools:
-                    kwargs["tools"] = gemini_tools
-                    kwargs["tool_config"] = gemini_config
+                def _gemini_config(timeout_s: float) -> genai_types.GenerateContentConfig:
+                    cfg = {"http_options": genai_types.HttpOptions(timeout=int(timeout_s * 1000))}
+                    if gemini_tools:
+                        cfg["tools"] = gemini_tools
+                        cfg["tool_config"] = genai_types.ToolConfig(
+                            function_calling_config=genai_types.FunctionCallingConfig(mode="AUTO")
+                        )
+                        # We run tools ourselves (with permissions + audit), never the SDK.
+                        cfg["automatic_function_calling"] = (
+                            genai_types.AutomaticFunctionCallingConfig(disable=True)
+                        )
+                    return genai_types.GenerateContentConfig(**cfg)
 
                 if on_token and not gemini_tools:
-                    stream_resp = self.gemini_model.generate_content(
-                        self._convert_to_gemini_prompt(messages),
-                        stream=True,
-                        request_options={"timeout": 12.0},
-                        **kwargs
+                    stream_resp = self.gemini_client.models.generate_content_stream(
+                        model=self.gemini_model,
+                        contents=self._convert_to_gemini_prompt(messages),
+                        config=_gemini_config(12.0),
                     )
                     full_parts = []
                     for chunk in stream_resp:
@@ -329,10 +346,10 @@ class Agent:
                     res_obj = types.SimpleNamespace(choices=[types.SimpleNamespace(message=mock_msg)], _streamed=True)
                     return res_obj
                 else:
-                    response = self.gemini_model.generate_content(
-                        self._convert_to_gemini_prompt(messages),
-                        request_options={"timeout": 8.0},
-                        **kwargs
+                    response = self.gemini_client.models.generate_content(
+                        model=self.gemini_model,
+                        contents=self._convert_to_gemini_prompt(messages),
+                        config=_gemini_config(8.0),
                     )
                     logger.debug("Gemini call successful")
                     return response
@@ -345,7 +362,7 @@ class Agent:
         error_summary = " | ".join(provider_errors)
         raise RuntimeError(f"All LLMs failed. {error_summary}")
     
-    def _convert_to_openai_format(self, messages: List[Dict]) -> List[Dict]:
+    def _convert_to_openai_format(self, messages: list[dict]) -> list[dict]:
         """Convert Gemini message format to OpenAI format."""
         converted = []
         for msg in messages:
@@ -354,7 +371,7 @@ class Agent:
             elif hasattr(msg, 'parts'):
                 # Gemini response
                 for part in msg.parts:
-                    if hasattr(part, 'function_call'):
+                    if getattr(part, 'function_call', None):
                         raw_args = getattr(part.function_call, 'args', None)
                         args_dict = dict(raw_args) if raw_args else {}
                         converted.append({
@@ -368,13 +385,13 @@ class Agent:
                                 }
                             }]
                         })
-                    elif hasattr(part, 'text'):
+                    elif getattr(part, 'text', None):
                         converted.append({"role": "assistant", "content": part.text})
             else:
                 converted.append(msg)
         return converted
 
-    def _convert_to_gemini_prompt(self, messages: List[Dict]) -> str:
+    def _convert_to_gemini_prompt(self, messages: list[dict]) -> str:
         """Convert chat messages into a Gemini-friendly transcript prompt."""
         lines = []
         for msg in messages:
@@ -434,7 +451,7 @@ class Agent:
                 
         return result
 
-    def chat(self, user_input: str, on_token: Optional[Callable[[str], None]] = None) -> str:
+    def chat(self, user_input: str, on_token: Callable[[str], None] | None = None) -> str:
         """Single-shot chat with tool use and optional token streaming."""
         logger.info(f"Chat request: {user_input[:100]}")
         self.memory.add_interaction(user_input, "")
@@ -607,7 +624,7 @@ class Agent:
                 candidate = response.candidates[0]
                 if hasattr(candidate, 'content') and candidate.content.parts:
                     for part in candidate.content.parts:
-                        if hasattr(part, 'function_call'):
+                        if getattr(part, 'function_call', None):
                             fc = part.function_call
                             tool_name = fc.name
                             raw_args = getattr(fc, 'args', None)
@@ -646,7 +663,7 @@ class Agent:
                             messages.append({"role": "tool", "content": json.dumps(trimmed_result)})
                             break
                     else:
-                        final_text = response.text if hasattr(response, 'text') else str(response)
+                        final_text = getattr(response, 'text', None) or str(response)
                         if on_token and not getattr(response, '_streamed', False):
                             words = final_text.split(" ")
                             for i_w, w in enumerate(words):
@@ -682,7 +699,7 @@ class Agent:
             f"Details: {raw_error}"
         )
     
-    def _handle_greeting(self, user_lower: str) -> Optional[str]:
+    def _handle_greeting(self, user_lower: str) -> str | None:
         """Handle friendly conversational greetings directly."""
         import re
         if re.match(r'^(?:h+[i|e|y]+|hello+|howdy|yo+|sup|greetings)(?:\s+there)?(?:[!?. ]|$)', user_lower) or any(
@@ -1029,10 +1046,11 @@ class Agent:
         
         return None  # No local handler for this query
 
-    def _build_port_kill_confirmation(self, port: int) -> Optional[str]:
+    def _build_port_kill_confirmation(self, port: int) -> str | None:
         """Find listening processes on port and return structured kill confirmation."""
-        import subprocess
         import json
+        import subprocess
+
         import psutil
         pids = []
         proc_names = []
@@ -1181,8 +1199,8 @@ class Agent:
     
     def _handle_kill_by_name_or_pid(self, user_input: str) -> str:
         """Handle kill process by name or PID with confirmation."""
-        import re
         import json
+        import re
         
         user_input = user_input.strip()
         target_pid = None
@@ -1307,7 +1325,7 @@ class Agent:
             }
             return f"__CONFIRM_KILL__{json.dumps(confirm_data)}__"
 
-    def _execute_tool_with_permissions(self, tool_name: str, params: Dict[str, Any], confirmed: bool = False) -> Dict[str, Any]:
+    def _execute_tool_with_permissions(self, tool_name: str, params: dict[str, Any], confirmed: bool = False) -> dict[str, Any]:
         """Execute a tool with tier-based permissions and audit logging."""
         tier = get_tool_tier(tool_name)
         
@@ -1369,7 +1387,7 @@ class Agent:
         # Execute plan with reflection
         return self._execute_plan(goal, plan, max_steps)
     
-    def _create_plan(self, goal: str) -> Dict[str, Any]:
+    def _create_plan(self, goal: str) -> dict[str, Any]:
         """Create a multi-step plan for the goal."""
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -1390,7 +1408,7 @@ class Agent:
                 else:
                     plan_text = str(response)
             elif hasattr(response, 'text'):
-                plan_text = response.text
+                plan_text = response.text or ""
             else:
                 plan_text = str(response)
             
@@ -1399,12 +1417,12 @@ class Agent:
             json_match = re.search(r'\{.*\}', plan_text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
-        except:
+        except Exception:
             pass
         
         return {"steps": []}
     
-    def _execute_plan(self, goal: str, plan: Dict, max_steps: int) -> str:
+    def _execute_plan(self, goal: str, plan: dict, max_steps: int) -> str:
         """Execute plan with reflection loop."""
         steps = plan.get("steps", [])
         executed_steps = []
@@ -1412,7 +1430,6 @@ class Agent:
         for i, step in enumerate(steps[:max_steps]):
             tool_name = step.get("tool")
             params = step.get("params", {})
-            reason = step.get("reason", "")
             
             # Execute step
             result = self._execute_tool_with_permissions(tool_name, params)
@@ -1429,7 +1446,7 @@ class Agent:
         
         return f"Completed {len(executed_steps)} steps. Goal may need more steps."
     
-    def _reflect(self, goal: str, executed_steps: List[Dict], is_last_step: bool) -> Dict[str, Any]:
+    def _reflect(self, goal: str, executed_steps: list[dict], is_last_step: bool) -> dict[str, Any]:
         """Reflect on progress and decide next action."""
         # Create a concise summary of executed steps to avoid context overflow
         steps_summary = []
@@ -1470,7 +1487,7 @@ class Agent:
                 else:
                     reflection_text = str(response)
             elif hasattr(response, 'text'):
-                reflection_text = response.text
+                reflection_text = response.text or ""
             else:
                 reflection_text = str(response)
             
@@ -1478,7 +1495,7 @@ class Agent:
             json_match = re.search(r'\{.*\}', reflection_text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
-        except:
+        except Exception:
             pass
         
         return {"decision": "continue" if not is_last_step else "done", "summary": "Completed."}
@@ -1530,7 +1547,8 @@ class Agent:
             service_name = undo_data.get("service") or params.get("name")
             if not service_name:
                 return "Cannot restart service: missing service name"
-            import platform, subprocess
+            import platform
+            import subprocess
             sys_name = platform.system()
             try:
                 if sys_name == "Linux":

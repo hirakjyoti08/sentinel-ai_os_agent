@@ -1,9 +1,7 @@
 import sys
-from typing import Tuple, Callable, Optional
-
+from collections.abc import Callable
 
 TIERS = ["read_only", "reversible", "destructive"]
-_TOOL_TIERS = None
 
 # Critical OS system processes that must NEVER be terminated or paused
 PROTECTED_PROCESS_NAMES = {
@@ -19,7 +17,7 @@ PROTECTED_PROCESS_NAMES = {
 }
 
 
-def is_protected_process(pid: int, name: Optional[str] = None) -> Tuple[bool, str]:
+def is_protected_process(pid: int, name: str | None = None) -> tuple[bool, str]:
     """Check if a process is a protected system process that must not be killed or paused."""
     if pid <= 1:
         return True, f"PID {pid} is an essential system init process"
@@ -36,15 +34,6 @@ def is_protected_process(pid: int, name: Optional[str] = None) -> Tuple[bool, st
         return True, f"'{proc_name}' (PID {pid}) is a critical OS system process required for system stability"
 
     return False, ""
-
-
-def get_tool_tier(tool_name: str) -> str:
-    """Get the tier for a tool."""
-    global _TOOL_TIERS
-    if _TOOL_TIERS is None:
-        from src.tools.registry import get_tool_tiers
-        _TOOL_TIERS = get_tool_tiers()
-    return _TOOL_TIERS.get(tool_name, "destructive")  # Default to most restrictive
 
 
 def requires_confirmation(tier: str) -> bool:
@@ -81,7 +70,7 @@ def confirm_action(
     tier: str,
     tool_name: str,
     params: dict,
-    confirm_callback: Optional[Callable[[str, str, dict], bool]] = None
+    confirm_callback: Callable[[str, str, dict], bool] | None = None
 ) -> bool:
     """Prompt user for confirmation. Returns True if confirmed."""
     if not requires_confirmation(tier):

@@ -1,8 +1,9 @@
 # NVIDIA Nemotron Client - OpenAI-compatible wrapper for NVIDIA NIM API
 
-from openai import OpenAI
-import os
 import logging
+import os
+
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,6 @@
 
 import time
 from collections import deque
-from typing import Deque
 
 
 class CircuitBreaker:
@@ -11,7 +10,7 @@ class CircuitBreaker:
     def __init__(self, max_actions: int = 5, window_seconds: int = 300):
         self.max_actions = max_actions
         self.window_seconds = window_seconds
-        self.actions: Deque[float] = deque()
+        self.actions: deque[float] = deque()
         self.triggered = False
     
     def record_action(self):

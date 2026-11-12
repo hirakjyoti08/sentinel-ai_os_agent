@@ -1,14 +1,15 @@
 # Audit Log - SQLite Storage for Actions and Undo
 
-import sqlite3
 import json
 import os
+import sqlite3
 from datetime import datetime
-from typing import Dict, Any, Optional, List
-from src.storage.db_schema_sql import DB_SCHEMA
+from typing import Any
 
+from sentinel.paths import audit_db_path
+from sentinel.storage.db_schema_sql import DB_SCHEMA
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "logs", "audit.db")
+DB_PATH = str(audit_db_path())
 
 
 def init_db():
@@ -20,7 +21,7 @@ def init_db():
     conn.close()
 
 
-def log_action(action: str, params: Dict[str, Any], tier: str, undo_data: Dict[str, Any] = None) -> int:
+def log_action(action: str, params: dict[str, Any], tier: str, undo_data: dict[str, Any] = None) -> int:
     """Log an action before execution. Returns the log ID."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -35,7 +36,7 @@ def log_action(action: str, params: Dict[str, Any], tier: str, undo_data: Dict[s
     return log_id
 
 
-def update_result(log_id: int, result: Dict[str, Any], undo_data: Optional[Dict[str, Any]] = None):
+def update_result(log_id: int, result: dict[str, Any], undo_data: dict[str, Any] | None = None):
     """Update the result of an action after execution, storing undo_data if available."""
     if undo_data is None and isinstance(result, dict) and "undo_data" in result:
         undo_data = result["undo_data"]
@@ -56,7 +57,7 @@ def update_result(log_id: int, result: Dict[str, Any], undo_data: Optional[Dict[
     conn.close()
 
 
-def get_last_action(reversible_only: bool = True) -> Optional[Dict[str, Any]]:
+def get_last_action(reversible_only: bool = True) -> dict[str, Any] | None:
     """Get the last executed action for undo."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -85,7 +86,7 @@ def mark_undone(log_id: int):
     conn.close()
 
 
-def get_recent_actions(limit: int = 10) -> List[Dict[str, Any]]:
+def get_recent_actions(limit: int = 10) -> list[dict[str, Any]]:
     """Get recent actions for display in TUI."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row

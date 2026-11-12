@@ -1,14 +1,15 @@
 # Reversible System Tools (require confirmation)
 
-import psutil
 import os
 import shutil
-import signal
-from typing import Dict, Any
-from src.safety.permissions import is_protected_process
+from typing import Any
+
+import psutil
+
+from sentinel.safety.permissions import is_protected_process
 
 
-def pause_process(pid: int) -> Dict[str, Any]:
+def pause_process(pid: int) -> dict[str, Any]:
     """Pause a process (SIGSTOP). Reversible with resume_process."""
     is_prot, prot_reason = is_protected_process(pid)
     if is_prot:
@@ -24,7 +25,7 @@ def pause_process(pid: int) -> Dict[str, Any]:
         return {"success": False, "error": f"Permission denied for process {pid}"}
 
 
-def resume_process(pid: int) -> Dict[str, Any]:
+def resume_process(pid: int) -> dict[str, Any]:
     """Resume a paused process (SIGCONT)."""
     try:
         proc = psutil.Process(pid)
@@ -36,7 +37,7 @@ def resume_process(pid: int) -> Dict[str, Any]:
         return {"success": False, "error": f"Permission denied for process {pid}"}
 
 
-def set_priority(pid: int, nice: int) -> Dict[str, Any]:
+def set_priority(pid: int, nice: int) -> dict[str, Any]:
     """Set process priority (nice value). Range: -20 (highest) to 19 (lowest)."""
     try:
         proc = psutil.Process(pid)
@@ -54,7 +55,7 @@ def set_priority(pid: int, nice: int) -> Dict[str, Any]:
         return {"success": False, "error": f"Permission denied for process {pid}"}
 
 
-def clear_cache_dir(path: str) -> Dict[str, Any]:
+def clear_cache_dir(path: str) -> dict[str, Any]:
     """Clear cache directories (*.cache, __pycache__, node_modules, etc.)."""
     if not os.path.exists(path):
         return {"success": False, "error": f"Path {path} does not exist"}
@@ -62,22 +63,22 @@ def clear_cache_dir(path: str) -> Dict[str, Any]:
     cleared = []
     patterns = ['*.cache', '__pycache__', '*.pyc', 'node_modules', '.pytest_cache', '*.log']
     
-    for root, dirs, files in os.walk(path):
+    for root, dirs, _files in os.walk(path):
         for pattern in patterns:
             if pattern in dirs:
                 full_path = os.path.join(root, pattern)
                 try:
                     shutil.rmtree(full_path)
                     cleared.append(full_path)
-                except Exception as e:
+                except Exception:
                     pass  # Skip on error
     
     return {"success": True, "cleared": cleared, "count": len(cleared)}
 
 
-def clean_developer_caches(targets: Optional[list] = None, custom_paths: Optional[list] = None) -> Dict[str, Any]:
+def clean_developer_caches(targets: list | None = None, custom_paths: list | None = None) -> dict[str, Any]:
     """Clean developer caches (e.g. 'pip', 'npm', 'xcode', 'homebrew', 'trash')."""
-    from src.tools.read_only import format_bytes
+    from sentinel.tools.read_only import format_bytes
 
     cache_map = {
         "xcode": [

@@ -1,8 +1,9 @@
 # Tool Registry - Definitions, Schemas, and Dispatcher
 
-from typing import Dict, List, Any, Callable
-from src.tools import read_only, reversible, destructive
+from collections.abc import Callable
+from typing import Any
 
+from sentinel.tools import destructive, read_only, reversible
 
 # Tool schema definition matching Gemini function calling format
 TOOL_DEFINITIONS = [
@@ -219,7 +220,7 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def get_tool_schemas() -> List[Dict[str, Any]]:
+def get_tool_schemas() -> list[dict[str, Any]]:
     """Return tool schemas in OpenAI function calling format (for Groq)."""
     return [
         {
@@ -234,7 +235,7 @@ def get_tool_schemas() -> List[Dict[str, Any]]:
     ]
 
 
-def get_gemini_tool_schemas() -> List[Dict[str, Any]]:
+def get_gemini_tool_schemas() -> list[dict[str, Any]]:
     """Return tool schemas in Gemini function calling format."""
     def _strip_unsupported_fields(schema: Any) -> Any:
         if isinstance(schema, dict):
@@ -257,9 +258,17 @@ def get_gemini_tool_schemas() -> List[Dict[str, Any]]:
     ]
 
 
-def get_tool_tiers() -> Dict[str, str]:
+def get_tool_tiers() -> dict[str, str]:
     """Return mapping of tool name to tier."""
     return {t["name"]: t["tier"] for t in TOOL_DEFINITIONS}
+
+
+_TOOL_TIERS = get_tool_tiers()
+
+
+def get_tool_tier(tool_name: str) -> str:
+    """Get the tier for a tool. Unknown tools default to the most restrictive tier."""
+    return _TOOL_TIERS.get(tool_name, "destructive")
 
 
 def get_tool_function(name: str) -> Callable:
@@ -270,7 +279,7 @@ def get_tool_function(name: str) -> Callable:
     raise ValueError(f"Tool not found: {name}")
 
 
-def execute_tool(name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def execute_tool(name: str, params: dict[str, Any]) -> dict[str, Any]:
     """Execute a tool by name with parameters."""
     func = get_tool_function(name)
     return func(**params)

@@ -1,15 +1,16 @@
 # Read-Only System Tools
 
-import psutil
 import os
 import platform
-import time
-import subprocess
 import re
-from typing import List, Dict, Any
+import subprocess
+import time
+from typing import Any
+
+import psutil
 
 
-def list_processes() -> Dict[str, Any]:
+def list_processes() -> dict[str, Any]:
     """List all running processes with key metrics."""
     processes = []
     now = time.time()
@@ -31,7 +32,7 @@ def list_processes() -> Dict[str, Any]:
     return {"success": True, "processes": sorted(processes, key=lambda x: x['cpu_percent'], reverse=True)}
 
 
-def get_disk_usage(path: str = "/") -> Dict[str, Any]:
+def get_disk_usage(path: str = "/") -> dict[str, Any]:
     """Get disk usage for a given path."""
     usage = psutil.disk_usage(path)
     return {
@@ -44,12 +45,12 @@ def get_disk_usage(path: str = "/") -> Dict[str, Any]:
     }
 
 
-def get_cpu_usage() -> Dict[str, Any]:
+def get_cpu_usage() -> dict[str, Any]:
     """Get system-wide CPU usage percentage."""
     return {"success": True, "cpu_percent": psutil.cpu_percent(interval=0.1)}
 
 
-def get_memory_usage() -> Dict[str, Any]:
+def get_memory_usage() -> dict[str, Any]:
     """Get system-wide RAM and Swap memory usage."""
     vm = psutil.virtual_memory()
     swap = psutil.swap_memory()
@@ -68,7 +69,7 @@ def get_memory_usage() -> Dict[str, Any]:
 _MAC_HARDWARE_CACHE = None
 
 
-def get_system_info() -> Dict[str, Any]:
+def get_system_info() -> dict[str, Any]:
     """Get hardware architecture, OS platform, Mac model name, chip, CPU cores, and total RAM."""
     global _MAC_HARDWARE_CACHE
     vm = psutil.virtual_memory()
@@ -128,7 +129,7 @@ def get_system_info() -> Dict[str, Any]:
     }
 
 
-def get_battery_and_thermal() -> Dict[str, Any]:
+def get_battery_and_thermal() -> dict[str, Any]:
     """Get battery percentage, charging state, cycle count, and thermal throttling state."""
     batt = None
     try:
@@ -226,7 +227,7 @@ def get_battery_and_thermal() -> Dict[str, Any]:
     }
 
 
-def get_top_memory_processes(n: int = 10) -> Dict[str, Any]:
+def get_top_memory_processes(n: int = 10) -> dict[str, Any]:
     """Get top N processes by memory usage."""
     result = list_processes()
     if result.get("success"):
@@ -235,7 +236,7 @@ def get_top_memory_processes(n: int = 10) -> Dict[str, Any]:
     return result
 
 
-def list_open_ports() -> Dict[str, Any]:
+def list_open_ports() -> dict[str, Any]:
     """List all open network ports with process info."""
     connections = []
     seen = set()
@@ -295,7 +296,7 @@ def list_open_ports() -> Dict[str, Any]:
     return {"success": True, "connections": connections}
 
 
-def get_gpu_usage() -> Dict[str, Any]:
+def get_gpu_usage() -> dict[str, Any]:
     """Get system-wide GPU utilization percentage and memory."""
     system = platform.system()
     
@@ -382,7 +383,7 @@ def format_speed(bytes_per_sec: float) -> str:
         return f"{bytes_per_sec:.0f} B/s"
 
 
-def get_network_bandwidth(interval: float = 0.2) -> Dict[str, Any]:
+def get_network_bandwidth(interval: float = 0.2) -> dict[str, Any]:
     """Get current network bandwidth transfer rates (upload/download speed) and totals."""
     try:
         n1 = psutil.net_io_counters()
@@ -413,7 +414,7 @@ def get_network_bandwidth(interval: float = 0.2) -> Dict[str, Any]:
         }
 
 
-def analyze_disk_hogs(custom_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+def analyze_disk_hogs(custom_paths: list[str] | None = None) -> dict[str, Any]:
     """Scan and analyze developer caches, build artifacts, and bloated directories."""
     default_candidates = [
         ("Xcode DerivedData", os.path.expanduser("~/Library/Developer/Xcode/DerivedData"), "Intermediate Xcode build objects"),
@@ -455,7 +456,7 @@ def analyze_disk_hogs(custom_paths: Optional[List[str]] = None) -> Dict[str, Any
         folder_size = 0
         file_count = 0
         try:
-            for root, dirs, files in os.walk(p):
+            for root, _dirs, files in os.walk(p):
                 for f in files:
                     try:
                         fp = os.path.join(root, f)

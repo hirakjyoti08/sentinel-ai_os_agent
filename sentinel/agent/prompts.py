@@ -60,7 +60,7 @@ Write minimal text (1-2 sentences max). Do NOT write long paragraphs.
 def get_system_prompt() -> str:
     """Return SYSTEM_PROMPT dynamically enriched with host hardware specs."""
     try:
-        from src.tools.read_only import get_system_info
+        from sentinel.tools.read_only import get_system_info
         info = get_system_info()
         model_name = info.get("model_name", "Mac")
         chip = info.get("chip", "Apple Silicon")

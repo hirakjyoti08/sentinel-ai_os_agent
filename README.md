@@ -1,5 +1,10 @@
 # 🛡️ Sentinel – AI-Powered OS Management Agent
 
+[![CI](https://github.com/hirakjyoti08/sentinel-ai_os_agent/actions/workflows/ci.yml/badge.svg)](https://github.com/hirakjyoti08/sentinel-ai_os_agent/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 > **An autonomous, natural-language operating system co-pilot that inspects system telemetry, troubleshoots hardware bottlenecks, supervises running processes, and manages network ports with built-in safety rails and reversible actions.**
 
 <p align="center">
@@ -103,21 +108,23 @@ The screenshot above demonstrates **SENTINEL** diagnosing, inspecting, and manag
 
 ```bash
 # Clone and enter project
-cd ai-os-agent
+git clone https://github.com/hirakjyoti08/sentinel-ai_os_agent.git
+cd sentinel-ai_os_agent
 
-# Install dependencies
-pip install -e .
+# Install (editable, with dev tools)
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
 
 # Configure API keys
 cp .env.example .env
 # Edit .env and add your NVIDIA_API_KEY (primary), plus optional GROQ_API_KEY and GEMINI_API_KEY
 
-# Initialize database
-python -c "from src.storage.audit_log import init_db; init_db()"
-
-# Run TUI
-python -m src.main
+# Run the TUI (the audit database is created automatically on first launch)
+sentinel            # or: python -m sentinel
 ```
+
+Or install it as a standalone CLI with [pipx](https://pipx.pypa.io): `pipx install .` and then run `sentinel` from anywhere.
+When installed this way, runtime data (audit DB, `.trash/`) lives in `~/.sentinel`; set `SENTINEL_HOME` to override.
 
 ### Usage
 
@@ -138,13 +145,15 @@ python -m src.main
 ## Project Structure
 
 ```
-ai-os-agent/
+sentinel-ai_os_agent/
 ├── pyproject.toml
 ├── .env.example
 ├── .env                    # Your API keys (gitignored)
 ├── README.md
-├── src/
-│   ├── main.py             # Entry point
+├── .github/workflows/ci.yml # Lint + tests on macOS & Linux
+├── sentinel/
+│   ├── main.py             # Entry point (`sentinel` console script)
+│   ├── paths.py            # Runtime data locations (audit DB, trash)
 │   ├── agent/
 │   │   ├── core.py         # Plan-Act-Observe-Reflect loop
 │   │   ├── prompts.py      # System prompts
@@ -153,11 +162,11 @@ ai-os-agent/
 │   │   └── nemotron_client.py # NVIDIA Nemotron API client (OpenAI-compatible)
 │   ├── tools/
 │   │   ├── registry.py     # Tool definitions & dispatcher
-│   │   ├── read_only.py    # 5 read-only tools
-│   │   ├── reversible.py   # 4 reversible tools
-│   │   └── destructive.py  # 3 destructive tools
+│   │   ├── read_only.py    # 11 read-only tools
+│   │   ├── reversible.py   # 5 reversible tools
+│   │   └── destructive.py  # 4 destructive tools
 │   ├── safety/
-│   │   ├── permissions.py  # Tier enforcement & confirmations
+│   │   ├── permissions.py  # Confirmations & protected-process guard
 │   │   └── circuit_breaker.py # Rate limiting
 │   ├── monitor/
 │   │   ├── watcher.py      # Background anomaly detector
@@ -168,8 +177,7 @@ ai-os-agent/
 │   └── ui/
 │       └── tui.py          # Textual 3-panel dashboard
 ├── tests/
-│   ├── test_tools.py       # Unit tests
-│   └── eval/               # Evaluation harness (optional)
+│   └── test_tools.py       # Unit tests
 └── logs/
     └── audit.db            # SQLite audit database
 ```
@@ -188,17 +196,21 @@ ai-os-agent/
 
 ## Development
 
-### Run Tests
+### Run Tests & Lint
 ```bash
+pip install -e ".[dev]"
+ruff check .
 python -m pytest tests/ -v
 ```
 
+CI runs the same checks on every push and pull request, on macOS and Linux across Python 3.11–3.13.
+
 ### Key Classes
-- `Agent` (src/agent/core.py) - Main orchestrator
-- `SystemWatcher` (src/monitor/watcher.py) - Background monitor
-- `NotificationCooldownManager` (src/monitor/notifier.py) - Throttled desktop alert dispatcher
-- `CircuitBreaker` (src/safety/circuit_breaker.py) - Rate limiter
-- `AIOSAgentApp` (src/ui/tui.py) - TUI application
+- `Agent` (sentinel/agent/core.py) - Main orchestrator
+- `SystemWatcher` (sentinel/monitor/watcher.py) - Background monitor
+- `NotificationCooldownManager` (sentinel/monitor/notifier.py) - Throttled desktop alert dispatcher
+- `CircuitBreaker` (sentinel/safety/circuit_breaker.py) - Rate limiter
+- `AIOSAgentApp` (sentinel/ui/tui.py) - TUI application
 
 ## Known Limitations
 
