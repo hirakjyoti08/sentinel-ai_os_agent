@@ -141,7 +141,7 @@ sentinel-ai_os_agent/
 │  ├─ ui/
 │  │  └─ tui.py                   # Textual 3‑panel dashboard
 │  └─ llm/
-│     └─ nemotron_client.py       # NVIDIA Nemotron (OpenAI‑compatible) client
+│     └─ providers.py             # Nemotron / Groq / Gemini providers + fallback chain
 ├─ tests/
 │  └─ test_tools.py               # Unit tests for tools, safety and TUI
 └─ logs/
@@ -231,7 +231,8 @@ MIT – see `LICENSE` for full text.
 | Safety & confirmations | `sentinel/safety/permissions.py`, `circuit_breaker.py` |
 | Audit & undo | `sentinel/storage/audit_log.py` |
 | TUI layout & key‑bindings | `sentinel/ui/tui.py` |
-| LLM client wiring | `sentinel/llm/nemotron_client.py`, `sentinel/agent/core.py` |
+| LLM client wiring | `sentinel/llm/providers.py` |
+| Local intent routing | `sentinel/agent/intents.py` |
 | Configuration (env vars) | `.env.example` |
 
 With this document a human or an AI can instantly grasp **what the project does, how it is organized, the safety guarantees, and how to run or extend it**.

@@ -226,6 +226,10 @@
 | 2026-10-23 | NVIDIA Nemotron replaces LM Studio as primary LLM | Frontier-model quality without local GPU requirements; Groq → Gemini kept as fallbacks | src/llm/nemotron_client.py, src/agent/core.py |
 | 2026-11-12 | Package renamed `src` → `sentinel`; `sentinel` console script; CI on macOS + Linux | Installable CLI (`pipx install .`), conventional layout, automated lint + tests | sentinel/, pyproject.toml, .github/workflows/ci.yml |
 | 2026-11-12 | Gemini migrated from deprecated `google-generativeai` to `google-genai`; unused `lmstudio_client.py` removed; tool tiers owned by `tools/registry.py` | Supported SDK; remove dead code; break `permissions` ↔ `registry` import cycle | sentinel/agent/core.py, sentinel/tools/registry.py, sentinel/safety/permissions.py |
+| 2026-11-12 | Split `agent/core.py` (1,590 → ~370 lines): `LLMProvider`/`FallbackChain` in `llm/providers.py`, ordered intent table in `agent/intents.py`, confirmations, offline handlers and undo in their own modules | One normalized response type removes duplicated streaming/tool-call code per provider; routing becomes pure and table-tested | sentinel/agent/, sentinel/llm/providers.py |
+| 2026-11-12 | Tool arguments typed with Pydantic; LLM schemas generated from the models; calls validated and coerced before running | Hallucinated or malformed arguments become clean errors instead of `TypeError`; one source of truth for schemas | sentinel/tools/registry.py |
+| 2026-11-12 | Safety-path test suite with a scripted LLM (163 tests total) | Prove kills only produce confirmations, reversible actions need approval, circuit breaker and undo work against a real process | tests/ |
+| 2026-11-12 | Fixed: offline `clean developer caches` bypassed confirmation/audit and was unreachable; Gemini deadline below API minimum (10s) | Found while extracting intents and by a live provider check | sentinel/agent/intents.py, sentinel/agent/local_handlers.py, sentinel/llm/providers.py |
 
 ---
 
