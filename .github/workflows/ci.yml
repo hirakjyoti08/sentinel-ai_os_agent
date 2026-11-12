@@ -37,7 +37,6 @@ jobs:
       GROQ_API_KEY: ""
       GEMINI_API_KEY: ""
       SENTINEL_DESKTOP_ALERTS: "false"
-      SENTINEL_HOME: ${{ runner.temp }}/sentinel-home
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,6 +45,10 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev]"
-      - run: python -m pytest -q
+      - name: Run tests
+        run: python -m pytest -q
+        env:
+          # `runner` context is only available at step level, not job level.
+          SENTINEL_HOME: ${{ runner.temp }}/sentinel-home
       - name: Smoke-test console script
         run: python -c "import shutil, sys; sys.exit(0 if shutil.which('sentinel') else 1)"
