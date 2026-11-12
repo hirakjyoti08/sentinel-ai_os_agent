@@ -2,7 +2,7 @@
 
 import pytest
 
-from sentinel.agent.intents import INTENT_NAMES, RoutingContext, route
+from sentinel.agent.intents import AGENT_INTENTS, INTENT_NAMES, RoutingContext, route
 from sentinel.agent.local_handlers import GUARDED_HANDLERS, HANDLERS
 
 
@@ -100,5 +100,6 @@ def test_suggested_cleanup_command_actually_cleans():
 
 
 def test_every_intent_has_exactly_one_handler():
-    assert set(INTENT_NAMES) == set(HANDLERS) | set(GUARDED_HANDLERS)
-    assert not set(HANDLERS) & set(GUARDED_HANDLERS)
+    groups = [set(HANDLERS), set(GUARDED_HANDLERS), set(AGENT_INTENTS)]
+    assert set(INTENT_NAMES) == set().union(*groups)
+    assert sum(len(g) for g in groups) == len(INTENT_NAMES)

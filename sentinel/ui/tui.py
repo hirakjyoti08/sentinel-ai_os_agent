@@ -15,6 +15,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Footer, Header, Input, RichLog, Static
 
 from sentinel.agent.core import Agent
+from sentinel.monitor import incidents
 from sentinel.monitor.notifier import NotificationCooldownManager, send_desktop_notification
 from sentinel.monitor.watcher import SystemMetrics, SystemWatcher
 from sentinel.storage.audit_log import get_recent_actions, init_db
@@ -846,7 +847,9 @@ class AIOSAgentApp(App):
     def __init__(self):
         super().__init__()
         self.agent = Agent()
-        self.watcher = SystemWatcher(interval=2.0, on_anomaly=self.on_anomaly_detected)
+        self.watcher = SystemWatcher(
+            interval=2.0, on_anomaly=self.on_anomaly_detected, on_metrics=self.on_metrics_tick
+        )
         cooldown_sec = float(os.getenv("ALERT_COOLDOWN_SEC", "60.0"))
         self.notification_manager = NotificationCooldownManager(default_cooldown=cooldown_sec)
         self._chat_panel: ChatPanel | None = None
@@ -1022,7 +1025,44 @@ class AIOSAgentApp(App):
             "system",
             full_msg
         )
-    
+
+        # 4. Root-cause report, written in the background (may call the LLM).
+        if incidents.report_mode() != "off":
+            threading.Thread(
+                target=self._write_incident_report, args=(anomaly, metrics), daemon=True
+            ).start()
+
+    def _write_incident_report(self, anomaly: Any, metrics: SystemMetrics):
+        try:
+            report = self.agent.create_incident_report(anomaly, metrics)
+        except Exception as e:  # never let a report crash the watcher
+            self._dispatch_ui_action(
+                self._chat_panel.add_message, "system", f"Couldn't build an incident report: {e}"
+            )
+            return
+        if report and self._chat_panel:
+            self._dispatch_ui_action(self._chat_panel.add_message, "agent", report.to_markdown())
+
+    def on_metrics_tick(self, metrics: SystemMetrics):
+        """Run automation rules on every telemetry snapshot (watcher thread)."""
+        if not self._chat_panel:
+            return
+        for run in self.agent.run_rules(metrics):
+            rule = run.firing.rule
+            self._dispatch_ui_action(self._chat_panel.add_message, "system", run.message)
+            self._dispatch_ui_action(
+                self.notify, run.message, title=f"⚙️ Rule {rule.id}", severity="information",
+                timeout=8.0,
+            )
+            if run.notify:
+                send_desktop_notification(
+                    title=f"⚙️ Sentinel rule {rule.id}",
+                    subtitle=run.firing.summary,
+                    message="; ".join(run.outcomes) or rule.describe(),
+                )
+            if run.outcomes:
+                self._dispatch_ui_action(self.refresh_audit_log)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button click events."""
         btn_id = event.button.id

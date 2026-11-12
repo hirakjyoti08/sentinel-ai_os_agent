@@ -19,7 +19,10 @@ import json
 import logging
 import re
 import time
+from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -42,9 +45,18 @@ from sentinel.llm.providers import (
     LLMResponse,
     build_default_chain,
 )
+from sentinel.monitor import incidents
+from sentinel.rules import Firing, Rule, RuleEngine, RuleError, RuleStore, parse_rule
+from sentinel.rules.models import LOWER_PRIORITY_NICE, format_duration
 from sentinel.safety.circuit_breaker import CircuitBreaker
 from sentinel.safety.permissions import confirm_action
-from sentinel.storage.audit_log import get_last_action, log_action, mark_undone, update_result
+from sentinel.storage.audit_log import (
+    get_last_action,
+    get_recent_actions,
+    log_action,
+    mark_undone,
+    update_result,
+)
 from sentinel.tools.registry import execute_tool, get_tool_tier
 
 logger = logging.getLogger(__name__)
@@ -65,6 +77,27 @@ _UNDO_FROM_PARAMS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 }
 
 
+YES_WORDS = frozenset({"yes", "y", "yep", "yeah", "save", "save it", "confirm", "ok", "okay"})
+NO_WORDS = frozenset({"no", "n", "nope", "cancel", "discard", "don't", "dont"})
+
+
+@dataclass
+class RuleRun:
+    """One rule firing and what Sentinel did about it."""
+
+    firing: Firing
+    outcomes: list[str] = field(default_factory=list)
+
+    @property
+    def notify(self) -> bool:
+        return any(a.type == "notify" for a in self.firing.rule.actions)
+
+    @property
+    def message(self) -> str:
+        done = "; ".join(self.outcomes) if self.outcomes else "notified you"
+        return f"⚙️ Rule {self.firing.rule.id} fired — {self.firing.summary}. Action: {done}."
+
+
 def emit_words(text: str, on_token: TokenCallback | None, delay: float = 0.003) -> None:
     """Stream an already-complete reply word by word (for non-streamed sources)."""
     if not on_token:
@@ -79,11 +112,15 @@ def emit_words(text: str, on_token: TokenCallback | None, delay: float = 0.003) 
 class Agent:
     """Natural-language OS assistant with tiered, audited tool execution."""
 
-    def __init__(self, llm: FallbackChain | None = None):
+    def __init__(self, llm: FallbackChain | None = None, rules_path: str | Path | None = None):
         load_dotenv()
         self.memory = AgentMemory()
         self.circuit_breaker = CircuitBreaker()
         self.llm = llm if llm is not None else build_default_chain()
+        self.rules = RuleStore(rules_path)
+        self.rule_engine = RuleEngine(self.rules)
+        self.pending_rule: Rule | None = None
+        self.incidents: deque[incidents.IncidentReport] = deque(maxlen=20)
 
     # ------------------------------------------------------------------ #
     # LLM access
@@ -135,7 +172,9 @@ class Agent:
     def _run_local_intents(self, user_input: str, *, fast_path_only: bool) -> str | None:
         ctx = self._routing_context(user_input)
         for name in intents.matching(ctx, fast_path_only=fast_path_only):
-            if name in GUARDED_HANDLERS:
+            if name in intents.AGENT_INTENTS:
+                reply = self._handle_agent_intent(name, ctx.text, user_input)
+            elif name in GUARDED_HANDLERS:
                 reply = GUARDED_HANDLERS[name](ctx.text, self._execute_tool_with_permissions)
             else:
                 reply = HANDLERS[name](ctx.text)
@@ -147,6 +186,123 @@ class Agent:
     def _try_local_fallback(self, user_input: str) -> str | None:
         """Answer common requests without an LLM (used when providers are down)."""
         return self._run_local_intents(user_input, fast_path_only=False)
+
+    # ------------------------------------------------------------------ #
+    # Automation rules
+    # ------------------------------------------------------------------ #
+
+    def _handle_agent_intent(self, name: str, text: str, user_input: str) -> str | None:
+        if name == "add_rule":
+            return self._draft_rule(user_input)
+        if name == "list_rules":
+            return self._list_rules()
+        if name == "delete_rule":
+            ref = intents.DELETE_RULE_RE.match(text).group(1)
+            rule = self.rules.get(ref)
+            if not rule or not self.rules.remove(rule.id):
+                return f"No rule '{ref}'. Type 'list rules' to see them."
+            self.rule_engine.reset(rule.id)
+            return f"🗑️ Deleted rule {rule.id}: {rule.describe()}."
+        if name == "toggle_rule":
+            verb, ref = intents.TOGGLE_RULE_RE.match(text).groups()
+            enable = verb in ("enable", "resume", "turn on")
+            rule = self.rules.get(ref)
+            if not rule:
+                return f"No rule '{ref}'. Type 'list rules' to see them."
+            self.rules.set_enabled(rule.id, enable)
+            self.rule_engine.reset(rule.id)
+            return f"{'▶️ Enabled' if enable else '⏸️ Disabled'} rule {rule.id}: {rule.describe()}."
+        if name == "incident_report":
+            if not self.incidents:
+                return "No alerts have fired since Sentinel started, so there's no incident report yet."
+            return self.incidents[-1].to_markdown()
+        return None
+
+    def _draft_rule(self, user_input: str) -> str:
+        """Parse a rule and ask for confirmation; it's saved only after the user says yes."""
+        try:
+            rule = parse_rule(user_input, self.llm)
+        except RuleError as e:
+            return f"⚠️ {e}"
+        self.pending_rule = rule
+        acts = {a.type for a in rule.actions}
+        lines = [
+            "Here's the rule I understood:",
+            f"**{rule.describe()}.**",
+            f"It will trigger at most once every {format_duration(rule.cooldown_seconds)} per "
+            f"{'process' if rule.condition.scope == 'process' else 'rule'}.",
+        ]
+        if acts & {"pause_process", "lower_priority"}:
+            lines.append("Saving it lets Sentinel take that action on its own. Each one is logged in "
+                         "the audit trail, and protected system processes and Sentinel itself are "
+                         "never touched.")
+        if "pause_process" in acts:
+            lines.append("A pause can be undone with Ctrl+U.")
+        if "lower_priority" in acts:
+            lines.append("Note: a lowered priority can't be raised back without admin rights; it "
+                         "resets when the process restarts.")
+        lines.append("Type **yes** to save it, or anything else to cancel.")
+        return "\n".join(lines)
+
+    def _list_rules(self) -> str:
+        rules = self.rules.all()
+        if not rules:
+            return ("You have no automation rules yet. Try: 'if any process uses over 90% CPU "
+                    "for 5 minutes, pause it and notify me'.")
+        lines = ["| # | ID | Rule | Status |", "|:---:|:---:|---|:---:|"]
+        for i, r in enumerate(rules, 1):
+            lines.append(f"| {i} | {r.id} | {r.describe()} | {'active' if r.enabled else 'disabled'} |")
+        lines.append("\nManage with 'disable rule <id>', 'enable rule <id>' or 'delete rule <id>'.")
+        return "\n".join(lines)
+
+    def run_rules(self, metrics: Any) -> list[RuleRun]:
+        """Evaluate rules against a telemetry snapshot and carry out their actions.
+
+        Called from the watcher thread on every tick. Actions go through the
+        normal permission pipeline with ``confirmed=True`` — the user approved
+        them when saving the rule — so they are tier-checked, audited and
+        undoable, and protected processes are still refused by the tools.
+        """
+        runs = []
+        for firing in self.rule_engine.evaluate(metrics):
+            run = RuleRun(firing)
+            for action in firing.rule.actions:
+                if action.type == "notify":
+                    continue
+                if not firing.target_pid:
+                    run.outcomes.append(f"no process to {action.type.replace('_', ' ')}")
+                    continue
+                tool, params, verb = {
+                    "pause_process": ("pause_process", {"pid": firing.target_pid}, "paused"),
+                    "lower_priority": ("set_priority",
+                                       {"pid": firing.target_pid, "nice": LOWER_PRIORITY_NICE},
+                                       "lowered priority of"),
+                }[action.type]
+                result = self._execute_tool_with_permissions(tool, params, confirmed=True)
+                target = f"{firing.target_name} (PID {firing.target_pid})"
+                run.outcomes.append(f"{verb} {target}" if result.get("success")
+                                    else f"couldn't act on {target}: {result.get('error')}")
+            logger.info(run.message)
+            runs.append(run)
+        return runs
+
+    # ------------------------------------------------------------------ #
+    # Incident reports
+    # ------------------------------------------------------------------ #
+
+    def create_incident_report(self, anomaly: Any, metrics: Any) -> incidents.IncidentReport | None:
+        """Explain an alert. Blocking (may call the LLM) — run it off the UI thread."""
+        mode = incidents.report_mode()
+        if mode == "off":
+            return None
+        try:
+            recent = get_recent_actions(limit=10)
+        except Exception:
+            recent = []
+        ctx = incidents.gather_context(anomaly, metrics, recent)
+        report = incidents.build_report(ctx, self.llm if mode == "llm" else None)
+        self.incidents.append(report)
+        return report
 
     # ------------------------------------------------------------------ #
     # Chat
@@ -175,7 +331,21 @@ class Agent:
         self.memory.add_interaction(user_input, "")
         text = user_input.lower().strip()
 
-        # 1. Fast path: greetings and destructive intents.
+        # 0. Answer to "save this rule?"
+        if self.pending_rule is not None:
+            rule, self.pending_rule = self.pending_rule, None
+            if text in YES_WORDS:
+                self.rules.add(rule)
+                return self._finish(user_input, (
+                    f"✅ Rule {rule.id} saved and active: {rule.describe()}.\n"
+                    "It runs locally every 2 seconds. Type 'list rules' to see all rules, "
+                    f"'disable rule {rule.id}' to pause it or 'delete rule {rule.id}' to remove it."
+                ), on_token)
+            if text in NO_WORDS:
+                return self._finish(user_input, "Okay, I discarded that rule.", on_token)
+            # Anything else: drop the draft and treat this as a new request.
+
+        # 1. Fast path: rules, greetings and destructive intents.
         if text in intents.FAST_GREETINGS and (greeting := greeting_reply(text)):
             return self._finish(user_input, greeting, on_token)
         if fast := self._run_local_intents(user_input, fast_path_only=True):

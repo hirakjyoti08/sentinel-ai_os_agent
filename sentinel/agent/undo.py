@@ -38,7 +38,12 @@ def _undo_set_priority(undo: dict, params: dict) -> Result | str:
     previous = undo.get("previous_nice")
     if previous is None:
         return f"Cannot revert priority for PID {pid}: previous nice value unknown"
-    return execute_tool("set_priority", {"pid": pid, "nice": previous})
+    result = execute_tool("set_priority", {"pid": pid, "nice": previous})
+    if not result.get("success") and "Permission denied" in str(result.get("error")):
+        # Unprivileged users may lower a process's priority but never raise it again.
+        return _fail(f"raising PID {pid}'s priority back to {previous} needs admin rights "
+                     "(sudo); it resets when the process restarts")
+    return result
 
 
 def _undo_delete(undo: dict, params: dict) -> Result | str:

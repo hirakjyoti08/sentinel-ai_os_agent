@@ -39,6 +39,8 @@ class SystemMetrics:
     cpu_history: list = field(default_factory=list)
     mem_history: list = field(default_factory=list)
     net_history: list = field(default_factory=list)
+    # Top memory consumers regardless of CPU (idle-but-bloated apps); used by rules.
+    top_memory_processes: list = field(default_factory=list)
 
 
 @dataclass
@@ -64,13 +66,15 @@ class SystemWatcher:
                  memory_threshold: float | None = None,
                  disk_threshold: float | None = None,
                  gpu_threshold: float | None = None,
-                 on_anomaly: Callable[[AnomalyEvent, SystemMetrics], None] | None = None):
+                 on_anomaly: Callable[[AnomalyEvent, SystemMetrics], None] | None = None,
+                 on_metrics: Callable[[SystemMetrics], None] | None = None):
         self.interval = interval
         self.cpu_threshold = cpu_threshold if cpu_threshold is not None else float(os.getenv("ALERT_CPU_THRESHOLD", "85.0"))
         self.memory_threshold = memory_threshold if memory_threshold is not None else float(os.getenv("ALERT_MEMORY_THRESHOLD", "90.0"))
         self.disk_threshold = disk_threshold if disk_threshold is not None else float(os.getenv("ALERT_DISK_THRESHOLD", "90.0"))
         self.gpu_threshold = gpu_threshold if gpu_threshold is not None else float(os.getenv("ALERT_GPU_THRESHOLD", "90.0"))
         self.on_anomaly = on_anomaly
+        self.on_metrics = on_metrics  # called with every snapshot (rule engine)
         self._thread: threading.Thread | None = None
         self._running = False
         self._last_metrics: SystemMetrics | None = None
@@ -107,6 +111,8 @@ class SystemWatcher:
                 metrics = self._collect_metrics()
                 self._last_metrics = metrics
                 self._check_anomalies(metrics)
+                if self.on_metrics:
+                    self.on_metrics(metrics)
             except Exception as e:
                 print(f"Monitor error: {e}")
             time.sleep(self.interval)
@@ -124,15 +130,20 @@ class SystemWatcher:
         cores = psutil.cpu_count(logical=True)
         
         processes = []
+        all_processes = []
         for proc in psutil.process_iter(['pid', 'name', 'memory_percent', 'cpu_percent', 'memory_info']):
             try:
                 info = proc.info
+                all_processes.append(info)
                 if info.get('cpu_percent') and info['cpu_percent'] > 0.1:
                     processes.append(info)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        
+
         top_processes = sorted(processes, key=lambda x: x['cpu_percent'] or 0, reverse=True)[:7]
+        top_memory_processes = sorted(
+            all_processes, key=lambda x: x.get('memory_percent') or 0, reverse=True
+        )[:7]
         
         gpu_percent = None
         gpu_device = None
@@ -203,7 +214,8 @@ class SystemWatcher:
             net_total_sent_str=net_sent_str,
             cpu_history=list(self.cpu_history),
             mem_history=list(self.mem_history),
-            net_history=list(self.net_history)
+            net_history=list(self.net_history),
+            top_memory_processes=top_memory_processes,
         )
     
     def _check_anomalies(self, metrics: SystemMetrics):

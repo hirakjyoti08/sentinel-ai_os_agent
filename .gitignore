@@ -39,6 +39,7 @@ env/
 *.sqlite3
 logs/
 audit_log.db
+rules.json
 
 # Testing & Coverage
 .pytest_cache/

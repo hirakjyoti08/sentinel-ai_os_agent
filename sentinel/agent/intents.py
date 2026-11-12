@@ -135,6 +135,29 @@ def is_kill_process(ctx: RoutingContext) -> bool:
     return False
 
 
+_RULE_PREFIX = re.compile(r"^(?:rule\s*:|(?:add|create|new)\s+(?:a\s+)?rule\b)")
+_CONDITIONAL = re.compile(r"^(?:if|when|whenever)\s")
+_RULE_ACTION = re.compile(
+    r"\b(notify|alert|tell me|let me know|warn|ping me|pause|suspend|lower|priority|"
+    r"throttle|renice|kill|terminate)\b"
+)
+_RULE_REF = r"\s+#?([a-z0-9]+)$"
+LIST_RULES_RE = re.compile(r"^(?:(?:list|show)(?:\s+(?:me\s+)?(?:my|all))?\s+rules|rules|my rules|what rules do i have\??)$")
+DELETE_RULE_RE = re.compile(r"^(?:delete|remove)\s+rule" + _RULE_REF)
+TOGGLE_RULE_RE = re.compile(r"^(enable|disable|pause|resume|turn (?:on|off))\s+rule" + _RULE_REF)
+INCIDENT_RE = re.compile(
+    r"(incident report|last incident|last alert|explain (?:the |that )?alert|"
+    r"what caused (?:the |that )?alert|why did (?:i get |the |that )?alert)"
+)
+
+
+def is_add_rule(text: str) -> bool:
+    """"rule: …", "add rule …", or "if/when … <number>% … <action>"."""
+    if _RULE_PREFIX.match(text):
+        return True
+    return bool(_CONDITIONAL.match(text) and re.search(r"\d", text) and _RULE_ACTION.search(text))
+
+
 def top_n(text: str) -> int | None:
     m = _TOP_N_RE.search(text)
     return int(m.group(1)) if m else None
@@ -153,6 +176,13 @@ class Intent:
 
 
 INTENTS: tuple[Intent, ...] = (
+    # Automation rules and incident reports (handled by the Agent itself). First, so
+    # "if spotify uses 50% cpu, kill it" is a (refused) rule, not a kill request.
+    Intent("list_rules", lambda c: bool(LIST_RULES_RE.match(c.text)), fast_path=True),
+    Intent("delete_rule", lambda c: bool(DELETE_RULE_RE.match(c.text)), fast_path=True),
+    Intent("toggle_rule", lambda c: bool(TOGGLE_RULE_RE.match(c.text)), fast_path=True),
+    Intent("add_rule", lambda c: is_add_rule(c.text), fast_path=True),
+    Intent("incident_report", lambda c: bool(INCIDENT_RE.search(c.text)), fast_path=True),
     Intent("greeting", lambda c: is_greeting(c.text) or is_identity_question(c.text)),
     Intent("system_health", lambda c: _any(c.text, HEALTH_KEYWORDS)),
     Intent("kill_highest_cpu", lambda c: _any(c.text, KILL_HIGHEST_CPU_KEYWORDS), fast_path=True),
@@ -190,6 +220,9 @@ INTENTS: tuple[Intent, ...] = (
 )
 
 INTENT_NAMES = tuple(i.name for i in INTENTS)
+
+# Intents whose handlers need the Agent's state (rule store, LLM, incident history).
+AGENT_INTENTS = frozenset({"list_rules", "delete_rule", "toggle_rule", "add_rule", "incident_report"})
 
 
 def matching(ctx: RoutingContext, *, fast_path_only: bool = False) -> Iterator[str]:

@@ -83,14 +83,14 @@ def sleeper() -> Iterator[psutil.Process]:
 
 
 @pytest.fixture
-def make_agent(monkeypatch):
-    """Build an ``Agent`` wired to a :class:`ScriptedLLM` (no network)."""
+def make_agent(monkeypatch, tmp_path):
+    """Build an ``Agent`` wired to a :class:`ScriptedLLM` (no network, temp rule file)."""
     monkeypatch.setenv("SENTINEL_DESKTOP_ALERTS", "false")
     from sentinel.agent.core import Agent
 
     def _make(*responses: LLMResponse | Exception) -> tuple[Agent, ScriptedLLM]:
         llm = ScriptedLLM(responses)
-        agent = Agent(llm=llm)  # type: ignore[arg-type]
+        agent = Agent(llm=llm, rules_path=tmp_path / "rules.json")  # type: ignore[arg-type]
         monkeypatch.setattr("sentinel.agent.core.emit_words", lambda text, cb, delay=0: cb and cb(text))
         return agent, llm
 
