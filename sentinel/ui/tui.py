@@ -9,6 +9,7 @@ from typing import Any
 from rich import box
 from rich.table import Table
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Footer, Header, Input, RichLog, Static
@@ -835,7 +836,8 @@ class AIOSAgentApp(App):
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),
         ("escape", "quit", "Quit"),
-        ("ctrl+u", "undo", "Undo"),
+        # priority: the chat Input binds ctrl+u to "delete line" and almost always has focus.
+        Binding("ctrl+u", "undo", "Undo", priority=True),
         ("ctrl+l", "clear_chat", "Clear Chat"),
     ]
     
