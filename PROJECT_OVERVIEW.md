@@ -233,6 +233,8 @@ MIT – see `LICENSE` for full text.
 | TUI layout & key‑bindings | `sentinel/ui/tui.py` |
 | LLM client wiring | `sentinel/llm/providers.py` |
 | Local intent routing | `sentinel/agent/intents.py` |
+| Automation rules | `sentinel/rules/` |
+| Incident reports | `sentinel/monitor/incidents.py` |
 | Configuration (env vars) | `.env.example` |
 
 With this document a human or an AI can instantly grasp **what the project does, how it is organized, the safety guarantees, and how to run or extend it**.

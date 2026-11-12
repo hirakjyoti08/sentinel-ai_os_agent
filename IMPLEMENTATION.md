@@ -230,6 +230,9 @@
 | 2026-11-12 | Tool arguments typed with Pydantic; LLM schemas generated from the models; calls validated and coerced before running | Hallucinated or malformed arguments become clean errors instead of `TypeError`; one source of truth for schemas | sentinel/tools/registry.py |
 | 2026-11-12 | Safety-path test suite with a scripted LLM (163 tests total) | Prove kills only produce confirmations, reversible actions need approval, circuit breaker and undo work against a real process | tests/ |
 | 2026-11-12 | Fixed: offline `clean developer caches` bypassed confirmation/audit and was unreachable; Gemini deadline below API minimum (10s) | Found while extracting intents and by a live provider check | sentinel/agent/intents.py, sentinel/agent/local_handlers.py, sentinel/llm/providers.py |
+| 2026-11-12 | Natural-language automation rules (`sentinel/rules/`): local parser first, LLM fallback, Pydantic-validated, saved only after explicit 'yes', evaluated locally every tick with sustained-duration + cooldown | Proactive automation without LLM cost per tick; destructive actions excluded by construction; never targets Sentinel or its parent processes | sentinel/rules/, sentinel/agent/core.py, sentinel/monitor/watcher.py, sentinel/ui/tui.py |
+| 2026-11-12 | Root-cause incident reports (`monitor/incidents.py`): culprit facts, peers and recent actions → AI-written report with local-heuristic fallback; command lines redacted; `SENTINEL_INCIDENT_REPORTS=llm|local|off` | Alerts explain themselves; privacy-safe by default | sentinel/monitor/incidents.py, sentinel/ui/tui.py |
+| 2026-11-12 | Found: unprivileged users can't raise a process's priority back, so `set_priority`/`lower_priority` is one-way without sudo | Rule confirmation and undo now say so instead of claiming it's undoable | sentinel/agent/undo.py, sentinel/agent/core.py |
 
 ---
 

@@ -40,6 +40,8 @@ three-tier permission model, a circuit breaker and an audit log with undo.
 | ↩️ **Audit log with undo** | Every action is written to SQLite with its parameters, result and undo data. `Ctrl+U` reverts the last change — resume a paused process, restore a deleted file, restart a service. |
 | 📊 **Live dashboard** | A [Textual](https://textual.textualize.io) TUI with streaming chat, CPU / GPU / memory / disk / network gauges and sparklines, clickable *Kill* and *Close* actions on processes and ports, and the audit trail. |
 | 🔔 **Proactive alerts** | A background watcher detects CPU, memory, disk and GPU pressure, names the culprit process, and sends in-app toasts plus native macOS / Linux desktop notifications with cooldown throttling. |
+| 🤖 **Natural-language rules** | Say *"if any process uses over 90% CPU for 5 minutes, pause it and notify me"*. Sentinel turns it into a structured rule, shows you what it understood, and saves it only after you confirm. Rules then run locally on every telemetry tick — no LLM calls — and can notify, pause or lower priority, never kill or delete. |
+| 🧾 **Root-cause reports** | When an alert fires, Sentinel gathers the culprit's age, child processes, threads, listening ports, other busy processes and your recent actions, and writes a short incident report: what happened, the likely cause, and what to do. AI-written when a model is reachable, local analysis otherwise. |
 | 🧹 **Developer disk cleaner** | Finds and safely clears Xcode DerivedData, Homebrew, pip, npm/yarn caches and the trash, reporting how much space was reclaimed. |
 
 ---
@@ -52,6 +54,10 @@ flowchart TD
     W["SystemWatcher<br/>background telemetry"] -->|anomaly + culprit PID| N["Notifier<br/>toasts · desktop alerts · cooldown"]
     W -->|live metrics| TUI
     N --> TUI
+    W -->|every tick| R["Rule engine<br/>local · no LLM"]
+    R -->|pause · lower priority| P
+    N -->|alert context| IR["Incident report<br/>AI or local analysis"]
+    IR --> TUI
 
     TUI --> A["Agent core"]
     A -->|common commands| FP["Fast path<br/>local intent routing"]
@@ -89,6 +95,8 @@ On top of the tiers:
 - **Protected processes can't be touched.** `launchd`, `kernel_task`, `WindowServer`, `systemd`, `Finder` and other critical system processes (plus PIDs ≤ 1) are refused for kill and pause.
 - **Circuit breaker.** After 5 destructive actions within 5 minutes, further destructive actions are blocked until the window clears.
 - **Recoverable deletes.** `delete_file` moves the target to `.trash/` first, so undo can restore it.
+- **Rules can't do anything destructive.** Automation rules can only notify, pause a process or lower its priority — killing, deleting or closing can't be expressed in a rule. Every rule is shown back to you and saved only after you type *yes*; its actions are audited, a pause can be undone with Ctrl+U, and Sentinel never targets itself, the terminal it runs in, or protected system processes.
+- **Redacted incident data.** Command lines can contain tokens or passwords, so they are masked before an incident is sent to an LLM. Set `SENTINEL_INCIDENT_REPORTS=local` to keep incident data on your machine entirely.
 - **Best-effort process restart.** Undoing a kill relaunches the process from its saved command line and working directory.
 
 ---
@@ -137,7 +145,8 @@ Then open `.env` and add your keys:
 | `SENTINEL_ALERT_SOUND` | | `true` | Play a sound with alerts |
 | `ALERT_CPU_THRESHOLD` / `ALERT_MEMORY_THRESHOLD` / `ALERT_DISK_THRESHOLD` / `ALERT_GPU_THRESHOLD` | | `85` / `90` / `90` / `90` | Alert thresholds (%) |
 | `ALERT_COOLDOWN_SEC` | | `60` | Minimum seconds between repeat alerts |
-| `SENTINEL_HOME` | | see below | Where the audit DB and `.trash/` live |
+| `SENTINEL_INCIDENT_REPORTS` | | `llm` | `llm` (AI-written), `local` (never sent to an LLM) or `off` |
+| `SENTINEL_HOME` | | see below | Where the audit DB, `rules.json` and `.trash/` live |
 
 Runtime data goes in the repository folder when you run from a source checkout, and in `~/.sentinel` when Sentinel is installed as a package. Set `SENTINEL_HOME` to put it anywhere else.
 
@@ -165,6 +174,20 @@ Which apps are listening on network ports?
 Kill spotify
 Close port 3000
 ```
+
+**Automate it with rules:**
+
+```text
+if any process uses over 90% CPU for 5 minutes, pause it and notify me
+when chrome uses more than 30% memory, lower its priority
+if disk is above 90%, alert me
+list rules
+disable rule 1        (also: enable rule <id>, delete rule <id>)
+```
+
+Sentinel reads common phrasings instantly and offline; anything else is interpreted by the LLM and validated before you're asked to confirm.
+
+**After an alert:** an incident report appears in the chat automatically. Ask *"explain the last alert"* to see it again.
 
 **Keyboard shortcuts:**
 
@@ -206,16 +229,25 @@ sentinel-ai_os_agent/
 │   │   └── circuit_breaker.py
 │   ├── monitor/
 │   │   ├── watcher.py        # Background telemetry + anomaly detection
+│   │   ├── incidents.py      # Root-cause context + incident reports
 │   │   └── notifier.py       # Desktop notifications + cooldown
+│   ├── rules/
+│   │   ├── models.py         # Rule / Condition / Action (Pydantic)
+│   │   ├── parser.py         # Natural language → rule (local, then LLM)
+│   │   ├── engine.py         # Sustained-condition + cooldown evaluation
+│   │   └── store.py          # rules.json persistence
 │   ├── storage/
 │   │   └── audit_log.py      # SQLite audit trail + undo data
 │   └── ui/
 │       └── tui.py            # Textual dashboard
 ├── tests/
+│   ├── test_agent_automation.py # Rules and incident reports through the agent
 │   ├── test_agent_safety.py  # Safety paths end to end with a scripted LLM
+│   ├── test_incidents.py     # Context, redaction, local and AI reports
 │   ├── test_intents.py       # Routing table and priority order
 │   ├── test_providers.py     # Streaming, normalization, fallback chain
 │   ├── test_registry.py      # Typed args, generated schemas, tiers
+│   ├── test_rules.py         # Parser, validation, store, engine timing
 │   ├── test_tools.py         # Tools, TUI widgets, notifications
 │   └── test_tui_bindings.py  # Keyboard shortcuts
 ├── .github/workflows/ci.yml  # Lint + tests on macOS & Linux
@@ -234,7 +266,7 @@ ruff check .             # lint
 python -m pytest -v      # run the test suite
 ```
 
-The 164 tests don't need API keys or network access. The safety tests drive the agent with a scripted LLM against a real disposable process and a temporary audit database, so they check what actually happens to the system — that an LLM-requested kill only produces a confirmation, that reversible actions are refused without approval, that the circuit breaker blocks bursts, and that undo really resumes a paused process. [GitHub Actions](.github/workflows/ci.yml) runs lint and tests on every push and pull request, on **Ubuntu and macOS** with **Python 3.11, 3.12 and 3.13**.
+The 236 tests don't need API keys or network access. The safety tests drive the agent with a scripted LLM against a real disposable process and a temporary audit database, so they check what actually happens to the system — that an LLM-requested kill only produces a confirmation, that reversible actions are refused without approval, that the circuit breaker blocks bursts, that undo really resumes a paused process, and that a saved rule pauses a real process once its condition has held long enough. [GitHub Actions](.github/workflows/ci.yml) runs lint and tests on every push and pull request, on **Ubuntu and macOS** with **Python 3.11, 3.12 and 3.13**.
 
 **Architecture at a glance**
 
@@ -244,6 +276,8 @@ The 164 tests don't need API keys or network access. The safety tests drive the 
 | `FallbackChain` / `LLMProvider` | `sentinel/llm/providers.py` | One interface over Nemotron, Groq and Gemini; normalizes streamed and non-streamed tool calls into `LLMResponse` |
 | `INTENTS` | `sentinel/agent/intents.py` | Ordered, pure matchers for the fast path and offline fallback |
 | `Tool` + Pydantic args | `sentinel/tools/registry.py` | Single source for tiers, LLM schemas and argument validation |
+| `RuleEngine` / `Rule` | `sentinel/rules/` | Parses rules from natural language, evaluates them every tick |
+| `gather_context` / `build_report` | `sentinel/monitor/incidents.py` | Root-cause context and incident reports |
 | `SystemWatcher` | `sentinel/monitor/watcher.py` | Collects metrics and raises anomalies |
 | `NotificationCooldownManager` | `sentinel/monitor/notifier.py` | Throttles repeat alerts |
 | `CircuitBreaker` | `sentinel/safety/circuit_breaker.py` | Limits bursts of destructive actions |
@@ -256,7 +290,9 @@ The 164 tests don't need API keys or network access. The safety tests drive the 
 - [ ] Connect the multi-step planner (`Agent.run_goal`: plan → act → observe → reflect, with dry-run) to the chat UI
 - [ ] Evaluation suite that scores tool choice, safety and step count across scripted scenarios
 - [ ] Expose the tool registry as an MCP server, behind the same permission tiers
-- [ ] Natural-language automation rules (*"pause anything above 90% CPU for 5 minutes"*)
+- [x] Natural-language automation rules (*"pause anything above 90% CPU for 5 minutes"*)
+- [x] Root-cause incident reports for alerts
+- [ ] Approve/deny prompt in the TUI for reversible tools requested by the LLM (e.g. *"pause Chrome"*)
 - [ ] Undo timeline: browse and revert any past action, not just the last one
 - [ ] Fully offline mode with a local model
 
@@ -267,6 +303,7 @@ The 164 tests don't need API keys or network access. The safety tests drive the 
 - **Network required.** The LLM providers are cloud APIs, and their free tiers have rate limits; Sentinel falls back between them automatically.
 - **Port listing on macOS** may need Full Disk Access or `sudo` to see every process.
 - **Undoing a kill is best effort.** The process is relaunched from its saved command line, but in-memory state is lost.
+- **Lowering a priority is one-way without admin rights.** Unprivileged users can lower a process's priority but not raise it again, so the `lower_priority` rule action lasts until the process restarts.
 - **Linux desktop notifications** need `notify-send` (part of `libnotify`).
 
 ---
